@@ -31,7 +31,8 @@ function App(){
  async function loadNamespaces(){
   try{
    const n=await api("/api/namespaces");setNamespaces(n);
-   if(!ns&&n.length)setNs(n[0].name);
+   const requestedNamespace=new URLSearchParams(window.location.search).get("namespace");
+   if(!ns&&n.length)setNs(n.some(item=>item.name===requestedNamespace)?requestedNamespace:n[0].name);
    else if(ns&&!n.some(x=>x.name===ns))setNs(n[0]?.name||"");
   }catch(e){setError(e.message)}
  }
@@ -71,6 +72,20 @@ function App(){
    const result=await api(path);setPayload(result);if(a==="Logs")setLogsText(result.logs||"");
   }catch(e){setError(e.message)}
  }
+ const deepLinkHandled=useRef(false);
+ useEffect(()=>{
+  if(deepLinkHandled.current||!ns||!pods.length)return;
+  const params=new URLSearchParams(window.location.search);
+  const targetPod=params.get("pod");
+  if(!targetPod)return;
+  const targetNamespace=params.get("namespace");
+  if(targetNamespace&&targetNamespace!==ns)return;
+  const pod=pods.find(item=>item.name===targetPod);
+  if(!pod)return;
+  deepLinkHandled.current=true;
+  const requestedAction=params.get("action");
+  open(pod,["Logs","Events","Troubleshoot"].includes(requestedAction)?requestedAction:"Troubleshoot");
+ },[ns,pods]);
  async function startStream(){
   if(!selected||!ns||!selectedContainer)return;
   stopStream();
