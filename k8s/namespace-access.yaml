@@ -1,0 +1,34 @@
+# Apply this RoleBinding separately in EACH namespace you approve.
+# It deliberately grants no Secret get/list permission.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sre-dashboard-reader
+  namespace: REPLACE_NAMESPACE
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sre-dashboard-reader
+  namespace: REPLACE_NAMESPACE
+subjects:
+- kind: ServiceAccount
+  name: sre-dashboard
+  namespace: mobile-sre
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: sre-dashboard-reader
