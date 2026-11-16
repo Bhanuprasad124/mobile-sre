@@ -19,7 +19,8 @@ function App(){
  [overview,setOverview]=useState(null),[selected,setSelected]=useState(null),
  [action,setAction]=useState("Overview"),[payload,setPayload]=useState(null),
  [search,setSearch]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState(""),
- [logsText,setLogsText]=useState(""),[streaming,setStreaming]=useState(false),[selectedContainer,setSelectedContainer]=useState("");
+ [logsText,setLogsText]=useState(""),[streaming,setStreaming]=useState(false),[selectedContainer,setSelectedContainer]=useState(""),
+ [metrics,setMetrics]=useState(null),[metricsLoading,setMetricsLoading]=useState(false);
  const streamAbort=useRef(null);
  async function api(path){
   const r=await fetch(path);
@@ -44,8 +45,16 @@ function App(){
   catch(e){setError(e.message)}
   finally{setBusy(false)}
  }
+ async function loadMetrics(){
+  if(!ns){setMetrics({available:false,message:"Select an accessible namespace to view pod metrics.",items:[]});return}
+  setMetricsLoading(true);
+  try{setMetrics(await api(`/api/metrics/pods?namespace=${encodeURIComponent(ns)}`))}
+  catch(e){setMetrics({available:false,message:e.message,items:[]})}
+  finally{setMetricsLoading(false)}
+ }
  useEffect(()=>{loadNamespaces();loadOverview()},[]);
  useEffect(()=>{loadPods();const t=setInterval(loadPods,30000);return()=>clearInterval(t)},[ns]);
+ useEffect(()=>{loadMetrics();const t=setInterval(loadMetrics,30000);return()=>clearInterval(t)},[ns]);
  useEffect(()=>{const t=setInterval(loadOverview,30000);return()=>clearInterval(t)},[]);
  useEffect(()=>()=>{streamAbort.current?.abort()},[]);
  async function open(p,a){
@@ -144,10 +153,25 @@ function App(){
    <section className="listhead"><h2>Pods <small>{ns||"No accessible namespace"}</small></h2><div className="search"><Search size={16}/><input placeholder="Search pods" value={search} onChange={e=>setSearch(e.target.value)}/></div></section>
    {error&&<div className="error"><AlertTriangle size={17}/>{error}</div>}
    {!namespaces.length&&!error&&<p className="muted">No namespaces are currently accessible to this dashboard service account.</p>}
-   <div className="pods">{filtered.map(p=><article className="pod" key={p.name}>
+   <div className="pods">{filtered.map(p=>{
+    const metric=metrics?.available?(metrics.items||[]).find(item=>item.name===p.name):null;
+    const limits=Object.values(p.resourceLimits||{});
+    const cpuLimit=limits.reduce((sum,item)=>sum+(item.cpuMillicores||0),0);
+    const memoryLimit=limits.reduce((sum,item)=>sum+(item.memoryMiB||0),0);
+    const cpuPercent=metric&&cpuLimit>0?Math.min(100,metric.cpuMillicores/cpuLimit*100):null;
+    const memoryPercent=metric&&memoryLimit>0?Math.min(100,metric.memoryMiB/memoryLimit*100):null;
+    return <article className="pod" key={p.name}>
     <div className="podtop" onClick={()=>open(p,"Overview")}><div><b>{p.name}</b><small>Restarts: {p.restarts} · {p.containers.length} container(s)</small></div><span className={`status ${status(p).toLowerCase().replaceAll("_","-")}`}>{status(p)}</span></div>
+    <div className="pod-metrics">
+     <div className="pod-metric"><div className="pod-metric-label"><small>CPU</small><b>{metric?metric.cpuMillicores+"m":"—"}</b></div>
+      {cpuPercent!==null?<><div className="usage-track"><span className="usage-fill cpu-fill" style={{width:cpuPercent+"%"}}/></div><small className="usage-caption">{cpuPercent.toFixed(1)}% of configured limit</small></>:<small className="usage-caption">{metric?"No CPU limit configured":metrics?.available===false?"Metrics unavailable":"Waiting for metrics"}</small>}
+     </div>
+     <div className="pod-metric"><div className="pod-metric-label"><small>Memory</small><b>{metric?metric.memoryMiB+" MiB":"—"}</b></div>
+      {memoryPercent!==null?<><div className="usage-track"><span className="usage-fill memory-fill" style={{width:memoryPercent+"%"}}/></div><small className="usage-caption">{memoryPercent.toFixed(1)}% of configured limit</small></>:<small className="usage-caption">{metric?"No memory limit configured":metrics?.available===false?"Metrics unavailable":"Waiting for metrics"}</small>}
+     </div>
+    </div>
     <div className="actions"><button onClick={()=>open(p,"Logs")}><FileText/>Logs</button><button onClick={()=>open(p,"Events")}><Clock3/>Events</button><button onClick={()=>open(p,"Troubleshoot")}><Stethoscope/>Diagnose</button><button onClick={()=>open(p,"ConfigMaps")}><Settings/>ConfigMaps</button><button onClick={()=>open(p,"Secrets")}><Shield/>Secrets</button><button className="details" onClick={()=>open(p,"Overview")}>Details <ChevronRight/></button></div>
-   </article>)}</div>
+   </article>})}</div>
    {busy&&<p className="muted">Refreshing pod inventory…</p>}
   </main>
   {selected&&<div className="overlay" onClick={closeDrawer}><aside className="drawer" onClick={e=>e.stopPropagation()}>
