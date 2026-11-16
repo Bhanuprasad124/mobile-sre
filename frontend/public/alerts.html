@@ -68,15 +68,21 @@ async function refresh(initial=false){
      const useEvents=mode==="pod"&&(item.code==="IMAGEPULLBACKOFF"||item.code==="ERRIMAGEPULL");
      const base="/api/pods/"+encodeURIComponent(item.resource);
      const path=mode==="logs"?base+"/logs?namespace="+encodeURIComponent(item.namespace):
+       mode==="alert"?base+"/diagnostics?namespace="+encodeURIComponent(item.namespace):
        useEvents?base+"/events?namespace="+encodeURIComponent(item.namespace):base+"/details?namespace="+encodeURIComponent(item.namespace);
      try{
       const response=await fetch(path);const result=await response.json();
       if(!response.ok)throw new Error(result.detail||"Unable to load pod information");
       detail.replaceChildren();
       const heading=document.createElement("h3");
-      heading.textContent=(mode==="logs"?"Pod logs":useEvents?"Pod Events":"Pod details")+" · "+item.namespace+"/"+item.resource;
+      heading.textContent=(mode==="logs"?"Pod logs":mode==="alert"?"Alert diagnostics":useEvents?"Pod Events":"Pod details")+" · "+item.namespace+"/"+item.resource;
       detail.append(heading);
-      if(mode==="logs"){
+      if(mode==="alert"){
+       const summary=document.createElement("p");summary.textContent="Alert: "+item.title+" · Severity: "+item.severity.toUpperCase()+" · Code: "+item.code;detail.append(summary);
+       if(!(result.findings||[]).length){const p=document.createElement("p");p.textContent="No additional diagnostic findings were returned. Review the alert message and Kubernetes Events.";detail.append(p)}
+       (result.findings||[]).forEach(finding=>{const block=document.createElement("div");block.className="finding";const title=document.createElement("b");title.textContent=(finding.severity||"info").toUpperCase()+" · "+finding.title;const msg=document.createElement("p");msg.textContent=finding.message||"";const recommendation=document.createElement("small");recommendation.textContent="Suggested checks: "+(finding.recommendation||"Review pod status and recent Events.");block.append(title,msg,recommendation);detail.append(block)});
+       const eventsLink=document.createElement("p");eventsLink.textContent="For scheduling, image-pull, and volume errors, use the View pod action or Kubernetes Events when available.";detail.append(eventsLink);
+      }else if(mode==="logs"){
        const output=document.createElement("pre");output.style.cssText="white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;background:#101b2d;color:#e5edf8;padding:12px;border-radius:7px;font-size:11px;line-height:1.5";
        output.textContent=result.logs||"No log output is currently available for this pod.";detail.append(output);
       }else if(useEvents){
@@ -95,6 +101,9 @@ async function refresh(initial=false){
     };
     logsButton.addEventListener("click",event=>{event.stopPropagation();showInline("logs")});
     podButton.addEventListener("click",event=>{event.stopPropagation();showInline("pod")});
+    row.tabIndex=0;row.setAttribute("role","button");row.setAttribute("aria-label","Show details for "+item.title);
+    row.addEventListener("click",event=>{if(event.target.closest("button"))return;showInline("alert")});
+    row.addEventListener("keydown",event=>{if(event.target!==row)return;if(event.key==="Enter"||event.key===" "){event.preventDefault();showInline("alert")}});
     if(restoreMode)showInline(restoreMode);
    }else{
     const details=document.createElement("details");details.className="alert-detail";
