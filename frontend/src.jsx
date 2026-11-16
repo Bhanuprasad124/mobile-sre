@@ -84,7 +84,7 @@ function App(){
   if(!pod)return;
   deepLinkHandled.current=true;
   const requestedAction=params.get("action");
-  open(pod,["Logs","Events","Troubleshoot"].includes(requestedAction)?requestedAction:"Troubleshoot");
+  open(pod,["Overview","Logs","Events","Troubleshoot"].includes(requestedAction)?requestedAction:"Troubleshoot");
  },[ns,pods]);
  async function startStream(){
   if(!selected||!ns||!selectedContainer)return;
