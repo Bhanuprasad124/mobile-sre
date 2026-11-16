@@ -30,16 +30,19 @@
 </main>
 <script>
 const $=id=>document.getElementById(id);
-async function refresh(){
+async function refresh(initial=false){
  const params=new URLSearchParams({restart_threshold:$("restarts").value,cpu_threshold:$("cpu").value,memory_threshold:$("memory").value});
- $("alerts").textContent="Evaluating current cluster state…";$("notice").innerHTML="";
+ const list=$("alerts");
+ const expanded=new Set([...list.querySelectorAll(".alert[data-alert-key]")].filter(row=>row.querySelector(".inline-detail:not([hidden])")).map(row=>row.dataset.alertKey));
+ if(initial)list.textContent="Loading current Kubernetes state…";
  try{
   const response=await fetch("/api/alerts?"+params);const data=await response.json();
   if(!response.ok)throw new Error(data.detail||"Alert request failed");
   $("total").textContent=data.counts.total;$("critical").textContent=data.counts.critical;$("warning").textContent=data.counts.warning;$("info").textContent=data.counts.info;
+  $("notice").innerHTML="";
   if(data.message)$("notice").innerHTML='<div class="notice">'+data.message+'</div>';
   if(data.limitations?.length)$("notice").innerHTML+='<div class="notice">'+data.limitations.map(x=>String(x).replaceAll("<","&lt;")).join("<br>")+'</div>';
-  const list=$("alerts");list.replaceChildren();
+  list.replaceChildren();
   if(!data.items.length){const p=document.createElement("p");p.className="empty";p.textContent="No active alerts detected for the resources this dashboard can inspect.";list.append(p)}
   for(const item of data.items){
    const row=document.createElement("article");row.className="alert";
@@ -51,12 +54,14 @@ async function refresh(){
    body.append(title,msg,meta);
    row.append(sev,body);
    if(item.category==="pod"&&item.namespace&&item.resource){
+    const alertKey=[item.category,item.namespace,item.resource,item.code].join("|");
+    row.dataset.alertKey=alertKey;
+    const restoreExpanded=expanded.has(alertKey);
     row.classList.add("clickable");row.tabIndex=0;row.setAttribute("role","button");
     row.setAttribute("aria-label","Show details for "+item.title);
     const hint=document.createElement("div");hint.className="alert-hint";hint.textContent="Click to view pod details here";body.append(hint);
     const detail=document.createElement("div");detail.className="inline-detail";detail.hidden=true;row.append(detail);
-    const toggle=async()=>{
-     if(!detail.hidden){detail.hidden=true;return}
+    const loadDetails=async()=>{
      detail.hidden=false;detail.textContent="Loading pod details…";
      const useEvents=item.code==="IMAGEPULLBACKOFF"||item.code==="ERRIMAGEPULL";
      const path=useEvents?"/api/pods/"+encodeURIComponent(item.resource)+"/events?namespace="+encodeURIComponent(item.namespace):"/api/pods/"+encodeURIComponent(item.resource)+"/diagnostics?namespace="+encodeURIComponent(item.namespace);
@@ -75,8 +80,10 @@ async function refresh(){
       const note=document.createElement("p");note.textContent="Read-only information. No Kubernetes resources are changed.";detail.append(note);
      }catch(error){detail.textContent=error.message}
     };
-    row.addEventListener("click",toggle);
+    const toggle=()=>{if(detail.hidden)loadDetails();else detail.hidden=true};
+    row.addEventListener("click",event=>{if(event.target.closest(".inline-detail"))return;toggle()});
     row.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();toggle()}});
+    if(restoreExpanded)loadDetails();
    }else{
     const details=document.createElement("details");details.className="alert-detail";
     const summary=document.createElement("summary");summary.textContent="View alert details";
@@ -89,8 +96,11 @@ async function refresh(){
    list.append(row);
   }
   $("updated").textContent="Updated "+new Date(data.generatedAt).toLocaleTimeString()+" · Automatic refresh every 30 seconds";
- }catch(e){$("alerts").textContent=e.message;$("notice").innerHTML='<div class="notice">Alert evaluation is currently unavailable.</div>'}
+ }catch(e){
+  $("notice").innerHTML='<div class="notice">Refresh failed: '+String(e.message).replaceAll("<","&lt;")+'. Showing the last successful results.</div>';
+  if(!list.children.length)list.textContent="Unable to load alerts. Use Refresh now to retry.";
+ }
 }
-$("refresh").addEventListener("click",refresh);$("apply").addEventListener("click",refresh);refresh();setInterval(refresh,30000);
+$("refresh").addEventListener("click",()=>refresh(false));$("apply").addEventListener("click",()=>refresh(false));refresh(true);setInterval(()=>refresh(false),30000);
 </script>
 </body></html>
