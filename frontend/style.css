@@ -26,3 +26,31 @@
 .workload-row b{font-size:12px}.workload-row small{font-size:10px}.workload-row strong{font-size:17px;color:#34445c}
 .updated{font-size:10px;color:#8291a8;margin:9px 2px 0}
 @media(max-width:700px){.overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.overview-lower{grid-template-columns:1fr}.section-title{align-items:flex-start;gap:8px;flex-direction:column}.metric{min-height:100px;padding:13px}.metric strong{font-size:24px}}
+
+/* Phase 2: live log streaming and read-only troubleshooting */
+.log-toolbar{display:flex;justify-content:space-between;align-items:end;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.log-toolbar label{display:flex;flex-direction:column;gap:6px;font-size:11px;color:#718096}
+.log-toolbar select{min-width:150px;padding:8px 10px;border:1px solid #d9e1ec;border-radius:8px;background:#fff;color:#263449}
+.log-buttons{display:flex;gap:8px;flex-wrap:wrap}
+.log-buttons button{display:inline-flex;align-items:center;gap:6px;border:1px solid #d9e1ec;background:#fff;border-radius:8px;padding:9px 11px;color:#34445c;cursor:pointer;font-size:12px}
+.log-buttons button:first-child{background:#eaf2ff;border-color:#cfe0fb;color:#1758a6}
+.stream-state{display:flex;align-items:center;gap:7px;font-size:11px;color:#718096;margin:8px 0}
+.stream-dot{width:8px;height:8px;border-radius:50%;background:#9aa6b2;display:inline-block}
+.stream-dot.active{background:#16a05a;box-shadow:0 0 0 3px #16a05a22}
+.log-output{min-height:220px;max-height:58vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#101b2d;color:#c7e2ff;border-radius:9px;padding:14px;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}
+.event-card,.finding{border:1px solid #e3e9f1;border-radius:10px;padding:13px;margin:10px 0;background:#fff}
+.event-card>div,.finding>div{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.event-card b,.finding b{font-size:13px;color:#25344a}
+.event-card span{font-size:10px;color:#718096;background:#f1f4f8;padding:4px 7px;border-radius:20px}
+.event-card p,.finding p{font-size:12px;line-height:1.5;color:#526176;overflow-wrap:anywhere}
+.event-card small,.finding small{font-size:10px;color:#8291a8;line-height:1.5}
+.event-card.warning,.finding.warning{border-left:3px solid #d89a27}
+.finding.critical{border-left:3px solid #cf443b}
+.finding.info{border-left:3px solid #3283c9}
+.severity{font-size:9px;letter-spacing:.06em;font-weight:700;padding:4px 6px;border-radius:5px;background:#f1f4f8;color:#536277}
+.finding.critical .severity{background:#fff0ef;color:#b53b33}
+.finding.warning .severity{background:#fff5df;color:#95620a}
+.finding.info .severity{background:#eaf2ff;color:#235d9f}
+.diagnostic-summary{display:flex;align-items:center;gap:10px;background:#f1f5fa;padding:13px;border-radius:9px;margin-bottom:14px;color:#34445c}
+.diagnostic-summary b{font-size:13px}.diagnostic-summary small{font-size:10px}
+@media(max-width:520px){.log-toolbar{align-items:stretch}.log-toolbar label{width:100%}.log-toolbar select{width:100%}.log-buttons{width:100%}.log-buttons button{flex:1}.log-output{font-size:11px;max-height:52vh}}
