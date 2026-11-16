@@ -2,6 +2,17 @@
 
 A mobile-first, read-only Kubernetes operations dashboard for cluster overview, pod logs, Kubernetes Events, ConfigMap references, Secret references (names only), and troubleshooting guidance.
 
+## Phase 4: Alert Center
+
+- Pod alert rows are clickable and expand read-only diagnostics or related Events directly inside the Alert Center; no redirect to Cluster Overview is required. Node and workload alerts expand an explanation in place.
+- A dedicated Alert Center is available at `/alerts.html`; the existing overview and pod cards remain focused.
+- Pod alerts include CrashLoopBackOff, image pull/configuration failures, OOMKilled containers, failed pods, and a configurable container restart threshold.
+- Node alerts include NotReady, high CPU, and high memory usage.
+- Workload alerts include unavailable Deployment replicas and unready StatefulSet/DaemonSet replicas.
+- Default thresholds are 3 container restarts, 80% node CPU, and 85% node memory. All three can be adjusted in the Alert Center.
+- Alert evaluation refreshes every 30 seconds. Alerts represent current state and disappear when the condition is no longer detected; durable acknowledgement/resolution history is not included yet.
+- Slack/email delivery and user-specific routing are follow-on integrations, not enabled in this release.
+
 ## Phase 3 capabilities
 
 - Live node CPU and memory usage, with percentages against Kubernetes allocatable capacity.
@@ -25,11 +36,11 @@ A mobile-first, read-only Kubernetes operations dashboard for cluster overview, 
 
 - Cluster-scoped access is limited to namespace discovery, SelfSubjectAccessReviews, read-only node metadata, and read-only node metrics.
 - Pod, pod-log, Event, ConfigMap, workload, and pod-metrics access is namespace-scoped.
-- The dashboard requires pod get/list, pods/log get, events get/list, ConfigMaps get/list, and apps workload get/list in each approved namespace.
+- Alert evaluation uses existing read-only node and namespace-scoped pod/workload permissions. Workload checks are performed only where the dashboard service account is authorized.
 - No Secret get/list permission is granted.
 - No pod exec, delete, restart, scale, or deployment mutation API is exposed.
 - Live log streams are opened only after namespace and pod access checks. Stopping the stream or closing the pod drawer cancels the browser request.
-- Diagnostics provide suggestions only; they do not make cluster changes.
+- Diagnostics provide suggestions only; they do not make cluster changes. Alert evaluation also performs no automatic remediation.
 - This prototype has no end-user login. Keep it local/internal. Do not expose it publicly until authentication, per-user authorization, TLS, audit logging, and rate limiting are implemented and reviewed.
 
 ## Prerequisites
@@ -43,10 +54,10 @@ From the project root:
 ```bash
 chmod +x scripts/*.sh
 docker login
-DOCKERHUB_USER=bhanuprasad124 KUBE_CONTEXT=minikube ./scripts/build-push-deploy.sh v0.5.0
+DOCKERHUB_USER=bhanuprasad124 KUBE_CONTEXT=minikube ./scripts/build-push-deploy.sh v0.6.3
 ```
 
-The script builds and pushes `bhanuprasad124/mobile-sre:v0.5.0`, applies the Kubernetes manifests, updates the `mobile-sre-platform` Deployment, waits for a successful rollout, and then removes the previous Deployment and Service names if they exist.
+The script builds and pushes `bhanuprasad124/mobile-sre:v0.6.1`, applies the Kubernetes manifests, updates the `mobile-sre-platform` Deployment, waits for a successful rollout, and then removes the previous Deployment and Service names if they exist.
 
 The application runs in the `mobile-sre` namespace and is exposed through the `mobile-sre-platform` Service:
 
@@ -55,7 +66,7 @@ kubectl get pods,svc -n mobile-sre
 kubectl port-forward -n mobile-sre svc/mobile-sre-platform 8080:80
 ```
 
-Open `http://localhost:8080` on the machine running port-forward.
+Open `http://localhost:8080` on the machine running port-forward. The Alerts link opens `http://localhost:8080/alerts.html`.
 
 ## Enable live metrics
 
@@ -107,6 +118,7 @@ Expected permissions in an approved namespace: pods list = yes, pods/log get = y
 - `GET /api/health`
 - `GET /api/namespaces`
 - `GET /api/overview`
+- `GET /api/alerts?restart_threshold=3&cpu_threshold=80&memory_threshold=85`
 - `GET /api/metrics/nodes`
 - `GET /api/metrics/pods?namespace=<namespace>`
 - `GET /api/metrics/namespaces`
@@ -121,7 +133,11 @@ Expected permissions in an approved namespace: pods list = yes, pods/log get = y
 
 ## Notes
 
-- Pending pods often have no container logs because the container has not started. Use Events and diagnostics to inspect scheduling, image pull, volume, and configuration failures.
+- Pending pods often have no container logs because the container has not started. Use Events and diagnostics to inspect scheduling, image pull, volume, and configuration failures. Pending pods are not automatically alerted on in this release, avoiding noise from intentionally pending workloads.
 - Kubernetes Events are retained only temporarily.
 - ConfigMaps may contain sensitive values. Grant ConfigMap read access only in namespaces approved for this dashboard.
 - This is a testing platform, not a production security boundary. Complete authentication, per-user authorization, CSRF/session protections where applicable, audit logging, rate limits, and private network access before broader deployment.
+
+## Phase 4 validation
+
+The GitHub integration can commit source changes, but it does not execute the Docker build or Minikube integration test. Validate the production image and alert API in Minikube before relying on alerts operationally.

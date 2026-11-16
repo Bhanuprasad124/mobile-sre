@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mobile SRE · Alerts</title>
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#172033;background:#f4f7fb}*{box-sizing:border-box}body{margin:0}header{height:68px;background:#101b2d;color:white;display:flex;align-items:center;justify-content:space-between;padding:0 max(20px,calc((100% - 1120px)/2))}.brand{font-weight:700}.brand small{display:block;color:#9aabc2;font-size:11px;font-weight:400;margin-top:3px}header a{color:#bfdbfe;text-decoration:none;font-size:13px}main{max-width:1120px;margin:28px auto;padding:0 20px}.intro{display:flex;justify-content:space-between;align-items:start;gap:16px}.intro h1{font-size:23px;margin:0}.intro p{font-size:13px;color:#718096;margin:7px 0 18px}.readonly{font-size:10px;color:#16834b;background:#e8f8ef;border-radius:18px;padding:7px 10px}.toolbar,.panel{background:white;border:1px solid #e3e9f1;border-radius:12px;padding:16px}.toolbar{display:flex;align-items:end;gap:15px;flex-wrap:wrap}.field{display:flex;flex-direction:column;gap:6px;font-size:11px;color:#718096}.field input{width:100px;padding:9px;border:1px solid #d9e1ec;border-radius:8px;font-size:13px;color:#172033}.btn{border:1px solid #d9e1ec;background:#fff;border-radius:8px;padding:10px 13px;cursor:pointer;color:#34445c}.counts{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:15px 0}.count{background:white;border:1px solid #e3e9f1;border-radius:11px;padding:15px}.count b{font-size:25px;display:block}.count small{color:#8291a8;font-size:11px}.count.critical b{color:#c13d35}.count.warning b{color:#a66b08}.panel h2{font-size:15px;margin:0 0 12px}.alert{padding:14px 2px;border-top:1px solid #edf0f5;display:grid;grid-template-columns:85px minmax(0,1fr) auto;gap:12px;align-items:start}.alert.clickable{cursor:pointer;border-radius:8px;padding-left:8px;padding-right:8px}.alert.clickable:hover{background:#f7faff}.alert:focus-visible{outline:2px solid #7aa7df;outline-offset:2px}.inline-detail{grid-column:1/-1;background:#f7f9fc;border:1px solid #e3e9f1;border-radius:9px;padding:13px;margin-top:5px}.inline-detail h3{font-size:12px;margin:0 0 8px}.inline-detail p{font-size:12px;color:#526176;margin:6px 0;line-height:1.5}.inline-detail .finding{border-top:1px solid #e3e9f1;padding:9px 0}.inline-detail .finding b{font-size:12px}.inline-detail .finding small{display:block;color:#718096;font-size:11px;margin-top:4px}.alert-hint{font-size:10px;color:#8291a8;margin-top:7px}.pod-alert-actions{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}.pod-alert-actions button{font:inherit;font-size:11px;color:#315f98;background:#f4f8ff;border:1px solid #d9e5f6;border-radius:7px;padding:7px 9px;cursor:pointer;white-space:nowrap}.pod-alert-actions button:hover{background:#eaf2ff}.inline-detail{grid-column:1/-1}.alert-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}.alert-actions a,.alert-actions button{font:inherit;font-size:11px;color:#315f98;background:#f4f8ff;border:1px solid #d9e5f6;border-radius:7px;padding:7px 10px;text-decoration:none;cursor:pointer}.alert-detail{font-size:11px;color:#63738a;margin-top:8px}.alert-detail summary{cursor:pointer;color:#315f98}.sev{font-size:9px;font-weight:700;letter-spacing:.05em;border-radius:5px;padding:5px 7px;height:max-content;text-align:center}.sev.critical{background:#ffe8e7;color:#b8322a}.sev.warning{background:#fff4d8;color:#946000}.body b{font-size:13px}.body p{font-size:12px;color:#526176;margin:5px 0;line-height:1.5}.meta{font-size:10px;color:#8291a8}.empty,.muted{font-size:13px;color:#718096}.notice{background:#fff8e8;border:1px solid #f2dfb4;color:#805b13;padding:11px;border-radius:8px;font-size:12px;margin:12px 0}.updated{font-size:10px;color:#8291a8;margin:12px 2px}.back{color:#4c75a5;text-decoration:none;font-size:12px}@media(max-width:600px){main{padding:0 12px;margin:16px auto}.counts{grid-template-columns:repeat(2,1fr)}.toolbar>*{flex:1}.field input{width:100%}.alert{grid-template-columns:75px minmax(0,1fr)}.pod-alert-actions{grid-column:2;justify-content:flex-start}}
+</style>
+</head>
+<body>
+<header><div class="brand">Mobile SRE<small>Kubernetes operations platform</small></div><a href="/">← Cluster overview</a></header>
+<main>
+ <div class="intro"><div><h1>Alert Center</h1><p>Live health signals from Kubernetes. Alerts clear automatically when the condition is no longer detected.</p></div><span class="readonly">READ ONLY</span></div>
+ <section class="toolbar">
+  <label class="field">Restart threshold<input id="restarts" type="number" min="1" max="100" value="3"></label>
+  <label class="field">Node CPU threshold (%)<input id="cpu" type="number" min="1" max="100" value="80"></label>
+  <label class="field">Node memory threshold (%)<input id="memory" type="number" min="1" max="100" value="85"></label>
+  <button class="btn" id="apply">Apply & refresh</button><button class="btn" id="refresh">Refresh now</button>
+ </section>
+ <section class="counts">
+  <div class="count"><b id="total">—</b><small>Active alerts</small></div>
+  <div class="count critical"><b id="critical">—</b><small>Critical</small></div>
+  <div class="count warning"><b id="warning">—</b><small>Warning</small></div>
+  <div class="count"><b id="info">—</b><small>Informational</small></div>
+ </section>
+ <div id="notice"></div>
+ <section class="panel"><h2>Current alerts</h2><div id="alerts" class="muted">Loading current Kubernetes state…</div></section>
+ <p id="updated" class="updated"></p>
+ <p class="muted">Evaluation refreshes every 30 seconds. No pod restarts, deletes, scaling, or other cluster changes are performed. Slack/email delivery and persistent acknowledgement history are planned as a later integration.</p>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+async function refresh(initial=false){
+ const params=new URLSearchParams({restart_threshold:$("restarts").value,cpu_threshold:$("cpu").value,memory_threshold:$("memory").value});
+ const list=$("alerts");
+ const expanded=new Map([...list.querySelectorAll(".alert[data-alert-key]")].filter(row=>row.querySelector(".inline-detail:not([hidden])")).map(row=>[row.dataset.alertKey,row.dataset.viewMode||"pod"]));
+ if(initial)list.textContent="Loading current Kubernetes state…";
+ try{
+  const response=await fetch("/api/alerts?"+params);const data=await response.json();
+  if(!response.ok)throw new Error(data.detail||"Alert request failed");
+  $("total").textContent=data.counts.total;$("critical").textContent=data.counts.critical;$("warning").textContent=data.counts.warning;$("info").textContent=data.counts.info;
+  $("notice").innerHTML="";
+  if(data.message)$("notice").innerHTML='<div class="notice">'+data.message+'</div>';
+  if(data.limitations?.length)$("notice").innerHTML+='<div class="notice">'+data.limitations.map(x=>String(x).replaceAll("<","&lt;")).join("<br>")+'</div>';
+  list.replaceChildren();
+  if(!data.items.length){const p=document.createElement("p");p.className="empty";p.textContent="No active alerts detected for the resources this dashboard can inspect.";list.append(p)}
+  for(const item of data.items){
+   const row=document.createElement("article");row.className="alert";
+   const sev=document.createElement("span");sev.className="sev "+item.severity;sev.textContent=item.severity.toUpperCase();
+   const body=document.createElement("div");body.className="body";
+   const title=document.createElement("b");title.textContent=item.title;
+   const msg=document.createElement("p");msg.textContent=item.message;
+   const meta=document.createElement("div");meta.className="meta";meta.textContent=[item.category,item.namespace,item.resource].filter(Boolean).join(" · ");
+   body.append(title,msg,meta);
+   row.append(sev,body);
+   if(item.category==="pod"&&item.namespace&&item.resource){
+    const alertKey=[item.category,item.namespace,item.resource,item.code].join("|");
+    row.dataset.alertKey=alertKey;
+    const restoreMode=expanded.get(alertKey);
+    const actions=document.createElement("div");actions.className="pod-alert-actions";
+    const logsButton=document.createElement("button");logsButton.type="button";logsButton.textContent="View logs";
+    const podButton=document.createElement("button");podButton.type="button";podButton.textContent="View pod";
+    actions.append(logsButton,podButton);
+    const detail=document.createElement("div");detail.className="inline-detail";detail.hidden=true;row.append(actions,detail);
+    const showInline=async(mode)=>{
+     if(!detail.hidden&&row.dataset.viewMode===mode){detail.hidden=true;row.dataset.viewMode="";return}
+     row.dataset.viewMode=mode;detail.hidden=false;detail.textContent=mode==="logs"?"Loading pod logs…":mode==="alert"?"Loading alert diagnostics…":"Loading pod details…";
+     const base="/api/pods/"+encodeURIComponent(item.resource);
+     const path=mode==="logs"?base+"/logs?namespace="+encodeURIComponent(item.namespace):
+       mode==="alert"?base+"/diagnostics?namespace="+encodeURIComponent(item.namespace):base+"/details?namespace="+encodeURIComponent(item.namespace);
+     try{
+      const response=await fetch(path);const result=await response.json();
+      if(!response.ok)throw new Error(result.detail||"Unable to load pod information");
+      detail.replaceChildren();
+      const heading=document.createElement("h3");
+      heading.textContent=(mode==="logs"?"Pod logs":mode==="alert"?"Alert details":"Pod details")+" · "+item.namespace+"/"+item.resource;
+      detail.append(heading);
+      if(mode==="alert"){
+       const summary=document.createElement("p");summary.textContent="Alert: "+item.title+" · Severity: "+item.severity.toUpperCase()+" · Category: "+item.category+" · Code: "+item.code+" · Status: "+(item.status||"Active");detail.append(summary);
+       const message=document.createElement("p");message.textContent=item.message||"No additional alert message was provided.";detail.append(message);
+       const target=document.createElement("p");target.textContent="Affected resource: "+(item.namespace?item.namespace+"/":"")+(item.resource||"Not specified");detail.append(target);
+       if(!(result.findings||[]).length){const p=document.createElement("p");p.textContent="No additional diagnostic findings were returned. Review the alert message and Kubernetes Events.";detail.append(p)}
+       (result.findings||[]).forEach(finding=>{const block=document.createElement("div");block.className="finding";const title=document.createElement("b");title.textContent=(finding.severity||"info").toUpperCase()+" · "+finding.title;const msg=document.createElement("p");msg.textContent=finding.message||"";const recommendation=document.createElement("small");recommendation.textContent="Suggested checks: "+(finding.recommendation||"Review pod status and recent Events.");block.append(title,msg,recommendation);detail.append(block)});
+       if((result.containers||[]).length){const containersHeading=document.createElement("h3");containersHeading.textContent="Container diagnostics";detail.append(containersHeading)}
+       (result.containers||[]).forEach(container=>{const block=document.createElement("div");block.className="finding";const title=document.createElement("b");title.textContent=container.name;const state=document.createElement("p");state.textContent="Ready: "+container.ready+" · Restarts: "+container.restartCount+" · Waiting: "+(container.waitingReason||"None")+" · Last termination: "+(container.lastTerminatedReason||"None")+" · Last exit code: "+(container.lastExitCode??"Not reported");block.append(title,state);detail.append(block)});
+       try{const eventsResponse=await fetch(base+"/events?namespace="+encodeURIComponent(item.namespace));const events=await eventsResponse.json();const eventsHeading=document.createElement("h3");eventsHeading.textContent="Recent Kubernetes Events";detail.append(eventsHeading);if(eventsResponse.ok&&events.length){events.forEach(event=>{const block=document.createElement("div");block.className="finding";const title=document.createElement("b");title.textContent=(event.type||"Event")+" · "+(event.reason||"Unknown");const msg=document.createElement("p");msg.textContent=event.message||"No event message";const meta=document.createElement("small");meta.textContent=(event.lastTimestamp||"Timestamp unavailable")+" · "+(event.count||1)+" occurrence(s)";block.append(title,msg,meta);detail.append(block)})}else{const p=document.createElement("p");p.textContent="No retained Events found for this pod.";detail.append(p)}}catch(_){const p=document.createElement("p");p.textContent="Kubernetes Events could not be loaded.";detail.append(p)}
+       const eventsLink=document.createElement("p");eventsLink.textContent="Use View pod for the same pod Details view shown in Cluster Overview. Suggested checks are diagnostic guidance only.";detail.append(eventsLink);
+      }else if(mode==="logs"){
+       const output=document.createElement("pre");output.style.cssText="white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;background:#101b2d;color:#e5edf8;padding:12px;border-radius:7px;font-size:11px;line-height:1.5";
+       output.textContent=result.logs||"No log output is currently available for this pod.";detail.append(output);
+      }else{
+       const summary=document.createElement("p");summary.textContent="Status: "+(result.phase||"Unknown")+" · Node: "+(result.node||"Not assigned")+" · Pod IP: "+(result.podIP||"Not assigned");detail.append(summary);
+       const conditionsHeading=document.createElement("h3");conditionsHeading.textContent="Conditions";detail.append(conditionsHeading);
+       if(!(result.conditions||[]).length){const p=document.createElement("p");p.textContent="No pod conditions reported.";detail.append(p)}
+       (result.conditions||[]).forEach(condition=>{const block=document.createElement("div");block.className="finding";const title=document.createElement("b");title.textContent=condition.type+": "+condition.status;const msg=document.createElement("p");msg.textContent=[condition.reason,condition.message].filter(Boolean).join(" · ")||"No additional condition details";block.append(title,msg);detail.append(block)});
+       const containersHeading=document.createElement("h3");containersHeading.textContent="Containers";detail.append(containersHeading);
+       (result.containers||[]).forEach(container=>{const block=document.createElement("div");block.className="finding";const title=document.createElement("b");title.textContent=container.name;const image=document.createElement("p");image.textContent="Image: "+(container.image||"Not reported");const resources=document.createElement("small");resources.textContent="Requests: "+JSON.stringify(container.requests||{})+" · Limits: "+JSON.stringify(container.limits||{});block.append(title,image,resources);detail.append(block)});
+      }
+      const note=document.createElement("p");note.textContent="Read-only information. No Kubernetes resources are changed.";detail.append(note);
+     }catch(error){detail.textContent=error.message}
+    };
+    logsButton.addEventListener("click",event=>{event.stopPropagation();showInline("logs")});
+    podButton.addEventListener("click",event=>{event.stopPropagation();window.location.href="/?namespace="+encodeURIComponent(item.namespace)+"&pod="+encodeURIComponent(item.resource)+"&action=Overview"});
+    row.tabIndex=0;row.setAttribute("role","button");row.setAttribute("aria-label","Show details for "+item.title);
+    row.addEventListener("click",event=>{if(event.target.closest("button,.inline-detail"))return;showInline("alert")});
+    row.addEventListener("keydown",event=>{if(event.target!==row)return;if(event.key==="Enter"||event.key===" "){event.preventDefault();showInline("alert")}});
+    if(restoreMode)showInline(restoreMode);
+   }else{
+    const details=document.createElement("details");details.className="alert-detail";details.open=false;
+    const summary=document.createElement("summary");summary.textContent="Alert details";
+    const explanation=document.createElement("p");explanation.textContent=item.message||"No additional alert message was provided.";
+    const metadata=document.createElement("p");metadata.textContent="Severity: "+item.severity.toUpperCase()+" · Category: "+item.category+" · Code: "+item.code+" · Status: "+(item.status||"Active");
+    const target=document.createElement("p");target.textContent="Affected resource: "+(item.resource||"Not specified")+(item.namespace?" · Namespace: "+item.namespace:"");
+    details.append(summary,metadata,target,explanation);body.append(details);
+    row.tabIndex=0;row.setAttribute("role","button");row.setAttribute("aria-label","Show details for "+item.title);
+    row.addEventListener("click",event=>{if(event.target.closest("summary"))return;details.open=!details.open});
+    row.addEventListener("keydown",event=>{if(event.target!==row)return;if(event.key==="Enter"||event.key===" "){event.preventDefault();details.open=!details.open}});
+   }
+   list.append(row);
+  }
+  $("updated").textContent="Updated "+new Date(data.generatedAt).toLocaleTimeString()+" · Automatic refresh every 30 seconds";
+ }catch(e){
+  $("notice").innerHTML='<div class="notice">Refresh failed: '+String(e.message).replaceAll("<","&lt;")+'. Showing the last successful results.</div>';
+  if(!list.children.length)list.textContent="Unable to load alerts. Use Refresh now to retry.";
+ }
+}
+$("refresh").addEventListener("click",()=>refresh(false));$("apply").addEventListener("click",()=>refresh(false));refresh(true);setInterval(()=>refresh(false),30000);
+</script>
+</body></html>
