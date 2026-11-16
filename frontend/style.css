@@ -82,3 +82,20 @@
 .diagnostic-summary{display:flex;align-items:center;gap:10px;background:#f1f5fa;padding:13px;border-radius:9px;margin-bottom:14px;color:#34445c}
 .diagnostic-summary b{font-size:13px}.diagnostic-summary small{font-size:10px}
 @media(max-width:520px){.log-toolbar{align-items:stretch}.log-toolbar label{width:100%}.log-toolbar select{width:100%}.log-buttons{width:100%}.log-buttons button{flex:1}.log-output{font-size:11px;max-height:52vh}}
+
+
+/* Phase 3: live CPU and memory metrics */
+.metrics-heading{margin-top:28px}
+.metrics-heading .refresh{white-space:nowrap}
+.metrics-cards{margin:12px 0}
+.metrics-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.metrics-grid .panel{min-width:0}
+.namespace-metrics{grid-column:1/-1}
+.table-wrap{width:100%;overflow-x:auto}
+.metrics-table{width:100%;border-collapse:collapse;font-size:11px;text-align:left}
+.metrics-table th{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#8291a8;font-weight:600;padding:9px 8px;border-bottom:1px solid #e8edf3;white-space:nowrap}
+.metrics-table td{padding:10px 8px;border-bottom:1px solid #edf0f5;color:#34445c;white-space:nowrap}
+.metrics-table td:first-child{white-space:normal;min-width:110px;overflow-wrap:anywhere}
+.metrics-table td b{font-size:11px}
+.metrics-table td small{font-size:9px;color:#8291a8}
+@media(max-width:700px){.metrics-grid{grid-template-columns:1fr}.namespace-metrics{grid-column:auto}.metrics-heading{align-items:flex-start}.metrics-heading .refresh{width:auto}}
