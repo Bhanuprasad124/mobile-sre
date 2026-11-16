@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 
-app = FastAPI(title="Mobile SRE", version="0.4.0")
+app = FastAPI(title="Mobile SRE", version="0.5.0")
 
 try:
     config.load_incluster_config()
@@ -623,14 +623,18 @@ def namespace_metrics():
         raise HTTPException(500, "Unable to discover namespaces")
     output = []
     unavailable = None
+    authorized = 0
+    succeeded = 0
     for item in all_namespaces:
         namespace = item.metadata.name
         if not has_namespace_access(namespace, "list", "pods"):
             continue
         if not has_namespace_access(namespace, "list", "pods", "metrics.k8s.io"):
             continue
+        authorized += 1
         try:
             result = list_pod_metrics(namespace)
+            succeeded += 1
             cpu = 0.0
             memory = 0
             pod_count = 0
@@ -650,7 +654,11 @@ def namespace_metrics():
         except ApiException as exc:
             unavailable = metrics_unavailable(exc)
     output.sort(key=lambda item: item["cpuMillicores"], reverse=True)
-    return {"available": True, "items": output, "message": unavailable}
+    if authorized == 0:
+        unavailable = "No approved namespace has pod-metrics permission yet. Reapply scripts/grant-namespace-access.sh for each approved namespace."
+    elif succeeded == 0 and unavailable is None:
+        unavailable = "No namespace metrics could be retrieved. Check Metrics Server and its API availability."
+    return {"available": succeeded > 0, "items": output, "message": unavailable}
 
 
 
