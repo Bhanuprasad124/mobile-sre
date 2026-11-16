@@ -243,6 +243,14 @@ def pods(namespace: str = Query(..., min_length=1, max_length=63)):
             "restarts": sum(cs.restart_count or 0 for cs in statuses),
             "node": pod.spec.node_name,
             "containers": [c.name for c in (pod.spec.containers or [])],
+            "resourceLimits": {
+                c.name: {
+                    "cpuMillicores": round(quantity_value((c.resources.limits or {}).get("cpu", "0")) * 1000, 2),
+                    "memoryMiB": round(quantity_value((c.resources.limits or {}).get("memory", "0")) / (1024 * 1024), 2),
+                }
+                for c in (pod.spec.containers or [])
+                if c.resources and c.resources.limits
+            },
             "created": pod.metadata.creation_timestamp.isoformat() if pod.metadata.creation_timestamp else None
         })
     return output
