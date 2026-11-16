@@ -4,7 +4,7 @@ A mobile-first, read-only Kubernetes operations dashboard for cluster overview, 
 
 ## Phase 4: Alert Center
 
-- Pod alerts now include an **Open pod diagnostics** or **Open pod Events** action that deep-links into the existing pod drawer on the cluster overview. Node and workload alerts expand an explanation and link to the overview.
+- Pod alert rows are clickable and expand read-only diagnostics or related Events directly inside the Alert Center; no redirect to Cluster Overview is required. Node and workload alerts expand an explanation in place.
 - A dedicated Alert Center is available at `/alerts.html`; the existing overview and pod cards remain focused.
 - Pod alerts include CrashLoopBackOff, image pull/configuration failures, OOMKilled containers, failed pods, and a configurable container restart threshold.
 - Node alerts include NotReady, high CPU, and high memory usage.
@@ -54,7 +54,7 @@ From the project root:
 ```bash
 chmod +x scripts/*.sh
 docker login
-DOCKERHUB_USER=bhanuprasad124 KUBE_CONTEXT=minikube ./scripts/build-push-deploy.sh v0.6.1
+DOCKERHUB_USER=bhanuprasad124 KUBE_CONTEXT=minikube ./scripts/build-push-deploy.sh v0.6.2
 ```
 
 The script builds and pushes `bhanuprasad124/mobile-sre:v0.6.1`, applies the Kubernetes manifests, updates the `mobile-sre-platform` Deployment, waits for a successful rollout, and then removes the previous Deployment and Service names if they exist.
