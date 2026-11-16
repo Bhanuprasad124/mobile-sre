@@ -2,6 +2,14 @@
 
 A mobile-first, read-only Kubernetes operations dashboard for cluster overview, pod logs, Kubernetes Events, ConfigMap references, Secret references (names only), and troubleshooting guidance.
 
+## Phase 3 capabilities
+
+- Live node CPU and memory usage, with percentages against Kubernetes allocatable capacity.
+- Per-pod and per-container CPU and memory usage for the selected namespace.
+- Namespace-level CPU and memory aggregation across approved namespaces.
+- Metrics are sourced from the Kubernetes Metrics API (Metrics Server), refreshed every 30 seconds, and are not presented as historical data.
+- A clear unavailable state is shown when Metrics Server is missing, not ready, or blocked by RBAC.
+
 ## Phase 2 capabilities
 
 - Cluster overview: node readiness and workload health.
@@ -15,8 +23,8 @@ A mobile-first, read-only Kubernetes operations dashboard for cluster overview, 
 
 ## Security model
 
-- Cluster-scoped access is limited to namespace discovery, SelfSubjectAccessReviews, and read-only node metadata.
-- Pod, pod-log, Event, ConfigMap, and workload access is namespace-scoped.
+- Cluster-scoped access is limited to namespace discovery, SelfSubjectAccessReviews, read-only node metadata, and read-only node metrics.
+- Pod, pod-log, Event, ConfigMap, workload, and pod-metrics access is namespace-scoped.
 - The dashboard requires pod get/list, pods/log get, events get/list, ConfigMaps get/list, and apps workload get/list in each approved namespace.
 - No Secret get/list permission is granted.
 - No pod exec, delete, restart, scale, or deployment mutation API is exposed.
@@ -35,10 +43,10 @@ From the project root:
 ```bash
 chmod +x scripts/*.sh
 docker login
-DOCKERHUB_USER=bhanuprasad124 KUBE_CONTEXT=minikube ./scripts/build-push-deploy.sh v0.4.0
+DOCKERHUB_USER=bhanuprasad124 KUBE_CONTEXT=minikube ./scripts/build-push-deploy.sh v0.5.0
 ```
 
-The script builds and pushes `bhanuprasad124/mobile-sre:v0.4.0`, applies the Kubernetes manifests, updates the `mobile-sre-platform` Deployment, waits for a successful rollout, and then removes the previous Deployment and Service names if they exist.
+The script builds and pushes `bhanuprasad124/mobile-sre:v0.5.0`, applies the Kubernetes manifests, updates the `mobile-sre-platform` Deployment, waits for a successful rollout, and then removes the previous Deployment and Service names if they exist.
 
 The application runs in the `mobile-sre` namespace and is exposed through the `mobile-sre-platform` Service:
 
@@ -48,6 +56,27 @@ kubectl port-forward -n mobile-sre svc/mobile-sre-platform 8080:80
 ```
 
 Open `http://localhost:8080` on the machine running port-forward.
+
+## Enable live metrics
+
+Metrics Server must be installed in the Kubernetes cluster. For the existing Minikube environment:
+
+```bash
+minikube addons enable metrics-server
+kubectl -n kube-system rollout status deployment/metrics-server --timeout=180s
+kubectl top nodes
+kubectl top pods -A
+```
+
+For EKS or another Kubernetes distribution, install the upstream Kubernetes Metrics Server using its maintained deployment instructions and verify that the `metrics.k8s.io/v1beta1` API is available. Do not disable kubelet TLS verification as a general workaround; resolve kubelet certificate and network configuration instead.
+
+The dashboard reads only the current Metrics API samples. Metrics Server does not provide long-term history. Prometheus is a later optional integration for historical charts and PromQL analytics.
+
+After deploying Phase 3, re-apply the namespace-scoped Role/RoleBinding in every namespace you approve so the dashboard can read pod metrics:
+
+```bash
+./scripts/grant-namespace-access.sh dev
+```
 
 ## Grant access to approved namespaces
 
@@ -78,6 +107,9 @@ Expected permissions in an approved namespace: pods list = yes, pods/log get = y
 - `GET /api/health`
 - `GET /api/namespaces`
 - `GET /api/overview`
+- `GET /api/metrics/nodes`
+- `GET /api/metrics/pods?namespace=<namespace>`
+- `GET /api/metrics/namespaces`
 - `GET /api/pods?namespace=<namespace>`
 - `GET /api/pods/<pod>/logs?namespace=<namespace>`
 - `GET /api/pods/<pod>/logs/stream?namespace=<namespace>&container=<container>`
