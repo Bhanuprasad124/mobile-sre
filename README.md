@@ -4,6 +4,7 @@ A mobile-first, read-only Kubernetes operations dashboard for cluster overview, 
 
 ## Phase 4: Alert Center
 
+- Pod alerts now include an **Open pod diagnostics** or **Open pod Events** action that deep-links into the existing pod drawer on the cluster overview. Node and workload alerts expand an explanation and link to the overview.
 - A dedicated Alert Center is available at `/alerts.html`; the existing overview and pod cards remain focused.
 - Pod alerts include CrashLoopBackOff, image pull/configuration failures, OOMKilled containers, failed pods, and a configurable container restart threshold.
 - Node alerts include NotReady, high CPU, and high memory usage.
