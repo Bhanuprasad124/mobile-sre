@@ -28,15 +28,19 @@ echo "==> Applying dashboard namespace, service account, RBAC discovery, Deploym
 kubectl apply -f k8s/base.yaml
 
 echo "==> Updating deployment image"
-kubectl set image deployment/opshealth-mobile-sre dashboard="$IMAGE" -n "$APP_NS"
-kubectl rollout status deployment/opshealth-mobile-sre -n "$APP_NS" --timeout=180s
+kubectl set image deployment/mobile-sre-platform dashboard="$IMAGE" -n "$APP_NS"
+kubectl rollout status deployment/mobile-sre-platform -n "$APP_NS" --timeout=180s
+
+# Retire the previous Deployment and Service after the replacement is healthy.
+kubectl delete deployment opshealth-mobile-sre -n "$APP_NS" --ignore-not-found=true
+kubectl delete service opshealth-mobile-sre -n "$APP_NS" --ignore-not-found=true
 
 echo
 echo "Deployment complete."
 echo "Image: ${IMAGE}"
 echo "Namespace: ${APP_NS}"
 echo "Check: kubectl get pods,svc -n ${APP_NS}"
-echo "Access: kubectl port-forward -n ${APP_NS} svc/opshealth-mobile-sre 8080:80"
+echo "Access: kubectl port-forward -n ${APP_NS} svc/mobile-sre-platform 8080:80"
 echo "Then open http://localhost:8080 on the same machine."
 echo
 echo "IMPORTANT: grant access only to approved namespaces, for example:"
