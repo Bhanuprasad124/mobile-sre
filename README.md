@@ -54,7 +54,7 @@ From the project root:
 ```bash
 chmod +x scripts/*.sh
 docker login
-DOCKERHUB_USER=bhanuprasad124 KUBE_CONTEXT=minikube ./scripts/build-push-deploy.sh v0.6.2
+DOCKERHUB_USER=bhanuprasad124 KUBE_CONTEXT=minikube ./scripts/build-push-deploy.sh v0.6.3
 ```
 
 The script builds and pushes `bhanuprasad124/mobile-sre:v0.6.1`, applies the Kubernetes manifests, updates the `mobile-sre-platform` Deployment, waits for a successful rollout, and then removes the previous Deployment and Service names if they exist.
