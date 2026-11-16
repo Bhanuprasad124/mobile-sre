@@ -501,6 +501,160 @@ def details(pod_name: str, namespace: str = Query(...)):
     }
 
 
+def quantity_value(value):
+    """Convert a Kubernetes quantity to its base unit as a float."""
+    from kubernetes.utils.quantity import parse_quantity
+    return float(parse_quantity(value or "0"))
+
+
+def metric_usage(usage):
+    cpu_cores = quantity_value((usage or {}).get("cpu", "0"))
+    memory_bytes = quantity_value((usage or {}).get("memory", "0"))
+    return {
+        "cpuCores": round(cpu_cores, 4),
+        "cpuMillicores": round(cpu_cores * 1000, 2),
+        "memoryBytes": int(memory_bytes),
+        "memoryMiB": round(memory_bytes / (1024 * 1024), 2),
+    }
+
+
+def metrics_unavailable(exc):
+    if exc.status in (404, 503):
+        return "Metrics API is unavailable. Install or check Kubernetes Metrics Server, then wait for its first collection cycle."
+    if exc.status == 403:
+        return "Metrics API access is denied. Apply the Mobile SRE metrics RBAC permissions."
+    return "Unable to retrieve live Kubernetes metrics."
+
+
+def list_pod_metrics(namespace):
+    require_namespace_access(namespace, "list", "pods")
+    require_namespace_access(namespace, "list", "pods", "metrics.k8s.io")
+    return client.CustomObjectsApi().list_namespaced_custom_object(
+        group="metrics.k8s.io", version="v1beta1",
+        namespace=namespace, plural="pods"
+    )
+
+
+@app.get("/api/metrics/nodes")
+def node_metrics():
+    """Current node usage from metrics.k8s.io; no historical values are implied."""
+    custom = client.CustomObjectsApi()
+    try:
+        metrics = custom.list_cluster_custom_object(
+            group="metrics.k8s.io", version="v1beta1", plural="nodes"
+        )
+        node_objects = {item["metadata"]["name"]: item for item in metrics.get("items", [])}
+        nodes = core.list_node().items
+        output = []
+        for node in nodes:
+            item = node_objects.get(node.metadata.name)
+            capacity = node.status.allocatable or node.status.capacity or {}
+            cpu_capacity = quantity_value(capacity.get("cpu", "0"))
+            memory_capacity = quantity_value(capacity.get("memory", "0"))
+            usage = metric_usage(item.get("usage", {})) if item else None
+            output.append({
+                "name": node.metadata.name,
+                "ready": ready_condition(node),
+                "usage": usage,
+                "allocatable": {
+                    "cpuMillicores": round(cpu_capacity * 1000, 2),
+                    "memoryBytes": int(memory_capacity),
+                    "memoryMiB": round(memory_capacity / (1024 * 1024), 2),
+                },
+                "cpuPercent": round((usage["cpuCores"] / cpu_capacity) * 100, 2)
+                    if usage and cpu_capacity else None,
+                "memoryPercent": round((usage["memoryBytes"] / memory_capacity) * 100, 2)
+                    if usage and memory_capacity else None,
+            })
+        return {
+            "available": True,
+            "timestamp": metrics.get("timestamp"),
+            "window": metrics.get("window"),
+            "items": output,
+        }
+    except ApiException as exc:
+        return {"available": False, "message": metrics_unavailable(exc), "items": []}
+    except (KeyError, TypeError, ValueError):
+        return {"available": False, "message": "Metrics Server returned an unexpected metrics payload.", "items": []}
+
+
+@app.get("/api/metrics/pods")
+def pod_metrics(namespace: str = Query(..., min_length=1, max_length=63)):
+    """Current per-pod and per-container CPU/memory usage in an approved namespace."""
+    try:
+        result = list_pod_metrics(namespace)
+        items = []
+        for pod in result.get("items", []):
+            containers = []
+            total_cpu = 0.0
+            total_memory = 0
+            for container in pod.get("containers", []):
+                usage = metric_usage(container.get("usage", {}))
+                total_cpu += usage["cpuCores"]
+                total_memory += usage["memoryBytes"]
+                containers.append({"name": container.get("name"), **usage})
+            items.append({
+                "name": pod.get("metadata", {}).get("name"),
+                "timestamp": pod.get("timestamp"),
+                "window": pod.get("window"),
+                "cpuMillicores": round(total_cpu * 1000, 2),
+                "memoryBytes": total_memory,
+                "memoryMiB": round(total_memory / (1024 * 1024), 2),
+                "containers": containers,
+            })
+        items.sort(key=lambda item: item["cpuMillicores"], reverse=True)
+        return {"available": True, "namespace": namespace,
+                "timestamp": result.get("items", [{}])[0].get("timestamp") if items else None,
+                "items": items}
+    except ApiException as exc:
+        return {"available": False, "namespace": namespace,
+                "message": metrics_unavailable(exc), "items": []}
+    except (KeyError, TypeError, ValueError):
+        return {"available": False, "namespace": namespace,
+                "message": "Metrics Server returned an unexpected metrics payload.", "items": []}
+
+
+@app.get("/api/metrics/namespaces")
+def namespace_metrics():
+    """Aggregate current pod usage for namespaces where pod metrics are authorized."""
+    try:
+        all_namespaces = core.list_namespace().items
+    except ApiException:
+        raise HTTPException(500, "Unable to discover namespaces")
+    output = []
+    unavailable = None
+    for item in all_namespaces:
+        namespace = item.metadata.name
+        if not has_namespace_access(namespace, "list", "pods"):
+            continue
+        if not has_namespace_access(namespace, "list", "pods", "metrics.k8s.io"):
+            continue
+        try:
+            result = list_pod_metrics(namespace)
+            cpu = 0.0
+            memory = 0
+            pod_count = 0
+            for pod in result.get("items", []):
+                pod_count += 1
+                for container in pod.get("containers", []):
+                    usage = metric_usage(container.get("usage", {}))
+                    cpu += usage["cpuCores"]
+                    memory += usage["memoryBytes"]
+            output.append({
+                "namespace": namespace,
+                "pods": pod_count,
+                "cpuMillicores": round(cpu * 1000, 2),
+                "memoryBytes": memory,
+                "memoryMiB": round(memory / (1024 * 1024), 2),
+            })
+        except ApiException as exc:
+            unavailable = metrics_unavailable(exc)
+    output.sort(key=lambda item: item["cpuMillicores"], reverse=True)
+    return {"available": True, "items": output, "message": unavailable}
+
+
+
+
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
