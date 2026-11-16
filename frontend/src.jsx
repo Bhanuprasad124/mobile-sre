@@ -1,8 +1,9 @@
-import React, {useEffect, useState} from "react";
+import React, {useEffect, useRef, useState} from "react";
 import {createRoot} from "react-dom/client";
 import {
  Activity, RefreshCw, FileText, Settings, Shield, ChevronRight, X,
- Search, AlertTriangle, Server, Layers, CheckCircle2, CircleAlert
+ Search, AlertTriangle, Server, Layers, CheckCircle2, CircleAlert,
+ Play, Square, Stethoscope, Clock3
 } from "lucide-react";
 import "./style.css";
 
@@ -17,12 +18,15 @@ function App(){
  const [namespaces,setNamespaces]=useState([]),[ns,setNs]=useState(""),[pods,setPods]=useState([]),
  [overview,setOverview]=useState(null),[selected,setSelected]=useState(null),
  [action,setAction]=useState("Overview"),[payload,setPayload]=useState(null),
- [search,setSearch]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState("");
+ [search,setSearch]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState(""),
+ [logsText,setLogsText]=useState(""),[streaming,setStreaming]=useState(false),[selectedContainer,setSelectedContainer]=useState("");
+ const streamAbort=useRef(null);
  async function api(path){
   const r=await fetch(path);
   if(!r.ok){let d={};try{d=await r.json()}catch{}throw new Error(d.detail||`Request failed (${r.status})`)}
   return r.json();
  }
+ function stopStream(){if(streamAbort.current){streamAbort.current.abort();streamAbort.current=null}setStreaming(false)}
  async function loadNamespaces(){
   try{
    const n=await api("/api/namespaces");setNamespaces(n);
@@ -43,24 +47,50 @@ function App(){
  useEffect(()=>{loadNamespaces();loadOverview()},[]);
  useEffect(()=>{loadPods();const t=setInterval(loadPods,30000);return()=>clearInterval(t)},[ns]);
  useEffect(()=>{const t=setInterval(loadOverview,30000);return()=>clearInterval(t)},[]);
+ useEffect(()=>()=>{streamAbort.current?.abort()},[]);
  async function open(p,a){
-  setSelected(p);setAction(a);setPayload(null);setError("");
+  stopStream();setSelected(p);setAction(a);setPayload(null);setError("");setLogsText("");
+  const defaultContainer=p.containers?.[0]||"";setSelectedContainer(defaultContainer);
   try{
    const q=`?namespace=${encodeURIComponent(ns)}`;
-   let path=a==="Logs"?`/api/pods/${encodeURIComponent(p.name)}/logs${q}`:
+   let path=a==="Logs"?`/api/pods/${encodeURIComponent(p.name)}/logs${q}${defaultContainer?`&container=${encodeURIComponent(defaultContainer)}`:""}`:
     a==="ConfigMaps"?`/api/pods/${encodeURIComponent(p.name)}/configmaps${q}`:
     a==="Secrets"?`/api/pods/${encodeURIComponent(p.name)}/secrets${q}`:
     a==="Events"?`/api/pods/${encodeURIComponent(p.name)}/events${q}`:
+    a==="Troubleshoot"?`/api/pods/${encodeURIComponent(p.name)}/diagnostics${q}`:
     `/api/pods/${encodeURIComponent(p.name)}/details${q}`;
-   setPayload(await api(path));
+   const result=await api(path);setPayload(result);if(a==="Logs")setLogsText(result.logs||"");
   }catch(e){setError(e.message)}
  }
+ async function startStream(){
+  if(!selected||!ns||!selectedContainer)return;
+  stopStream();
+  const controller=new AbortController();streamAbort.current=controller;
+  setStreaming(true);setError("");
+  try{
+   const q=new URLSearchParams({namespace:ns,container:selectedContainer,tail_lines:"100"});
+   const response=await fetch(`/api/pods/${encodeURIComponent(selected.name)}/logs/stream?${q}`,{signal:controller.signal});
+   if(!response.ok){let message=`Log stream failed (${response.status})`;try{const body=await response.json();message=body.detail||message}catch{}throw new Error(message)}
+   if(!response.body)throw new Error("Streaming is not supported by this browser.");
+   const reader=response.body.getReader(),decoder=new TextDecoder();
+   while(true){const {value,done}=await reader.read();if(done)break;const chunk=decoder.decode(value,{stream:true});if(chunk)setLogsText(previous=>(previous+chunk).slice(-300000))}
+  }catch(e){if(e.name!=="AbortError")setError(e.message)}
+  finally{if(streamAbort.current===controller){streamAbort.current=null;setStreaming(false)}}
+ }
+ async function loadPreviousLogs(){
+  if(!selected)return;stopStream();setError("");
+  try{const q=new URLSearchParams({namespace:ns,previous:"true",container:selectedContainer});
+   const result=await api(`/api/pods/${encodeURIComponent(selected.name)}/logs?${q}`);
+   setPayload(result);setLogsText(result.logs||"");
+  }catch(e){setError(e.message)}
+ }
+ const closeDrawer=()=>{stopStream();setSelected(null);setPayload(null)};
  const filtered=pods.filter(p=>p.name.toLowerCase().includes(search.toLowerCase()));
  const status=p=>p.reason||p.phase;
  const nodeSummary=overview?.nodes;
  const workloads=overview?.workloads;
  return <div className="app">
-  <header><div className="brand"><Activity/><div><b>OpsHealth SRE</b><small>Kubernetes operations</small></div></div><span className="readonly">READ ONLY</span></header>
+  <header><div className="brand"><Activity/><div><b>Mobile SRE</b><small>Kubernetes operations platform</small></div></div><span className="readonly">READ ONLY</span></header>
   <main>
    <section className="toolbar">
     <div><label>CLUSTER</label><b>Current Kubernetes context</b></div>
@@ -116,22 +146,23 @@ function App(){
    {!namespaces.length&&!error&&<p className="muted">No namespaces are currently accessible to this dashboard service account.</p>}
    <div className="pods">{filtered.map(p=><article className="pod" key={p.name}>
     <div className="podtop" onClick={()=>open(p,"Overview")}><div><b>{p.name}</b><small>Restarts: {p.restarts} · {p.containers.length} container(s)</small></div><span className={`status ${status(p).toLowerCase().replaceAll("_","-")}`}>{status(p)}</span></div>
-    <div className="actions"><button onClick={()=>open(p,"Logs")}><FileText/>Logs</button><button onClick={()=>open(p,"ConfigMaps")}><Settings/>ConfigMaps</button><button onClick={()=>open(p,"Secrets")}><Shield/>Secrets</button><button className="details" onClick={()=>open(p,"Overview")}>Details <ChevronRight/></button></div>
+    <div className="actions"><button onClick={()=>open(p,"Logs")}><FileText/>Logs</button><button onClick={()=>open(p,"Events")}><Clock3/>Events</button><button onClick={()=>open(p,"Troubleshoot")}><Stethoscope/>Diagnose</button><button onClick={()=>open(p,"ConfigMaps")}><Settings/>ConfigMaps</button><button onClick={()=>open(p,"Secrets")}><Shield/>Secrets</button><button className="details" onClick={()=>open(p,"Overview")}>Details <ChevronRight/></button></div>
    </article>)}</div>
    {busy&&<p className="muted">Refreshing pod inventory…</p>}
   </main>
-  {selected&&<div className="overlay" onClick={()=>setSelected(null)}><aside className="drawer" onClick={e=>e.stopPropagation()}>
-   <div className="drawerhead"><div><small>POD DETAILS</small><h2>{selected.name}</h2></div><button className="iconbtn" onClick={()=>setSelected(null)}><X/></button></div>
-   <nav>{["Overview","Logs","Events","ConfigMaps","Secrets"].map(a=><button className={action===a?"active":""} onClick={()=>open(selected,a)} key={a}>{a}</button>)}</nav>
+  {selected&&<div className="overlay" onClick={closeDrawer}><aside className="drawer" onClick={e=>e.stopPropagation()}>
+   <div className="drawerhead"><div><small>POD DETAILS</small><h2>{selected.name}</h2></div><button className="iconbtn" onClick={closeDrawer}><X/></button></div>
+   <nav>{["Overview","Logs","Events","Troubleshoot","ConfigMaps","Secrets"].map(a=><button className={action===a?"active":""} onClick={()=>open(selected,a)} key={a}>{a}</button>)}</nav>
    <div className="content">{error&&<div className="error">{error}</div>}{!payload?<p className="muted">Loading…</p>:
-    action==="Logs"?<><div className="logtools"><span>Container: {payload.container||"default"}</span><button onClick={async()=>{try{setPayload(await api(`/api/pods/${encodeURIComponent(selected.name)}/logs?namespace=${encodeURIComponent(ns)}&previous=true`))}catch(e){setError(e.message)}}}>Previous logs</button></div><pre>{payload.logs||"No log output returned."}</pre></>:
+    action==="Logs"?<><div className="log-toolbar"><label>Container<select value={selectedContainer} onChange={async e=>{const value=e.target.value;stopStream();setSelectedContainer(value);setLogsText("");setPayload(null);setError("");try{const q=new URLSearchParams({namespace:ns,container:value});const result=await api(`/api/pods/${encodeURIComponent(selected.name)}/logs?${q}`);setPayload(result);setLogsText(result.logs||"")}catch(err){setError(err.message)}}}>{(selected.containers||[]).map(name=><option key={name} value={name}>{name}</option>)}</select></label><div className="log-buttons">{!streaming?<button onClick={startStream}><Play size={14}/> Live</button>:<button onClick={stopStream}><Square size={14}/> Stop</button>}<button onClick={loadPreviousLogs}>Previous logs</button></div></div><div className="stream-state"><span className={streaming?"stream-dot active":"stream-dot"}/>{streaming?"Live stream connected":"Snapshot / stream stopped"} · Timestamped</div><pre className="log-output">{logsText||"No log output available. Pending pods may not have container logs yet; inspect Events and diagnostics."}</pre></>:
     action==="ConfigMaps"?payload.length?payload.map(x=><div className="resource" key={x.name}><b>{x.name}</b>{x.unavailable?<p>Configuration unavailable</p>:<pre>{JSON.stringify(x.data,null,2)}</pre>}</div>):<p className="muted">No ConfigMaps referenced by this pod.</p>:
     action==="Secrets"?payload.length?payload.map(x=><div className="resource" key={x.name}><b><Shield size={15}/> {x.name}</b><p>Reference: {x.reference} · Values are not retrieved.</p></div>):<p className="muted">No Secret references found in this pod specification.</p>:
-    action==="Events"?payload.length?payload.map((x,i)=><div className="resource" key={i}><b>{x.type} · {x.reason}</b><p>{x.message}</p><small>{x.lastTimestamp||""}</small></div>):<p className="muted">No retained events found for this pod.</p>:
+    action==="Events"?payload.length?payload.map((x,i)=><div className={`event-card ${x.type==="Warning"?"warning":""}`} key={i}><div><b>{x.reason}</b><span>{x.type} · {x.count||1} occurrence(s)</span></div><p>{x.message}</p><small>{x.lastTimestamp||"Timestamp unavailable"}{x.source?` · ${x.source}`:""}</small></div>):<p className="muted">No retained events found for this pod.</p>:
+    action==="Troubleshoot"?<><div className="diagnostic-summary"><Stethoscope size={18}/><div><b>{payload.phase} · {payload.name}</b><small>Node: {payload.node||"Not assigned"}</small></div></div>{(payload.findings||[]).map((f,i)=><div className={`finding ${f.severity}`} key={i}><div><span className="severity">{f.severity.toUpperCase()}</span><b>{f.title}</b></div><p>{f.message}</p><small><strong>Suggested checks:</strong> {f.recommendation}</small></div>)}<p className="muted">Guidance only. No cluster changes are performed.</p></>:
     <><div className="resource"><b>Status: {payload.phase||"Unknown"}</b><p>Node: {payload.node||"Not assigned"} · IP: {payload.podIP||"Not assigned"}</p></div><h3>Conditions</h3>{(payload.conditions||[]).map((c,i)=><div className="resource" key={i}><b>{c.type}: {c.status}</b><p>{c.reason} {c.message}</p></div>)}<h3>Containers</h3>{(payload.containers||[]).map(c=><div className="resource" key={c.name}><b>{c.name}</b><p>{c.image}</p></div>)}</>}
    </div>
   </aside></div>}
-  <footer>Read-only dashboard · 30-second refresh · Secret values are never retrieved</footer>
+  <footer>Mobile SRE · Read-only Kubernetes diagnostics · Secret values are never retrieved</footer>
  </div>;
 }
 createRoot(document.getElementById("root")).render(<App/>);
