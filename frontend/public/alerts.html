@@ -100,16 +100,19 @@ async function refresh(initial=false){
     logsButton.addEventListener("click",event=>{event.stopPropagation();showInline("logs")});
     podButton.addEventListener("click",event=>{event.stopPropagation();showInline("pod")});
     row.tabIndex=0;row.setAttribute("role","button");row.setAttribute("aria-label","Show details for "+item.title);
-    row.addEventListener("click",event=>{if(event.target.closest("button"))return;showInline("alert")});
+    row.addEventListener("click",event=>{if(event.target.closest("button,.inline-detail"))return;showInline("alert")});
     row.addEventListener("keydown",event=>{if(event.target!==row)return;if(event.key==="Enter"||event.key===" "){event.preventDefault();showInline("alert")}});
     if(restoreMode)showInline(restoreMode);
    }else{
-    const details=document.createElement("details");details.className="alert-detail";details.open=true;
+    const details=document.createElement("details");details.className="alert-detail";details.open=false;
     const summary=document.createElement("summary");summary.textContent="Alert details";
     const explanation=document.createElement("p");explanation.textContent=item.message||"No additional alert message was provided.";
     const metadata=document.createElement("p");metadata.textContent="Severity: "+item.severity.toUpperCase()+" · Category: "+item.category+" · Code: "+item.code+" · Status: "+(item.status||"Active");
     const target=document.createElement("p");target.textContent="Affected resource: "+(item.resource||"Not specified")+(item.namespace?" · Namespace: "+item.namespace:"");
     details.append(summary,metadata,target,explanation);body.append(details);
+    row.tabIndex=0;row.setAttribute("role","button");row.setAttribute("aria-label","Show details for "+item.title);
+    row.addEventListener("click",event=>{if(event.target.closest("summary"))return;details.open=!details.open});
+    row.addEventListener("keydown",event=>{if(event.target!==row)return;if(event.key==="Enter"||event.key===" "){event.preventDefault();details.open=!details.open}});
    }
    list.append(row);
   }
