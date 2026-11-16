@@ -46,18 +46,11 @@ function App(){
   finally{setBusy(false)}
  }
  async function loadMetrics(){
+  if(!ns){setMetrics({available:false,message:"Select an accessible namespace to view pod metrics.",items:[]});return}
   setMetricsLoading(true);
-  try{
-   const requests=[
-    api("/api/metrics/nodes"),
-    ns?api(`/api/metrics/pods?namespace=${encodeURIComponent(ns)}`):Promise.resolve({available:false,message:"Select an accessible namespace to view pod metrics.",items:[]}),
-    api("/api/metrics/namespaces")
-   ];
-   const [nodes,podData,namespacesData]=await Promise.all(requests);
-   setMetrics({nodes,pods:podData,namespaces:namespacesData,updatedAt:new Date().toISOString()});
-  }catch(e){
-   setMetrics({error:e.message,updatedAt:new Date().toISOString()});
-  }finally{setMetricsLoading(false)}
+  try{setMetrics(await api(`/api/metrics/pods?namespace=${encodeURIComponent(ns)}`))}
+  catch(e){setMetrics({available:false,message:e.message,items:[]})}
+  finally{setMetricsLoading(false)}
  }
  useEffect(()=>{loadNamespaces();loadOverview()},[]);
  useEffect(()=>{loadPods();const t=setInterval(loadPods,30000);return()=>clearInterval(t)},[ns]);
@@ -151,41 +144,6 @@ function App(){
    </section>
    {overview&&<p className="updated">Updated {new Date(overview.generatedAt).toLocaleTimeString()} · Refreshes every 30 seconds · Node metadata is cluster-wide; pod and workload counts are RBAC-scoped.</p>}
 
-   <section className="section-title metrics-heading" id="metrics">
-    <div><h2>Live resource metrics</h2><p>Current CPU and memory usage from Kubernetes Metrics Server. Refreshes every 30 seconds; no historical data is stored.</p></div>
-    <button className="refresh" onClick={loadMetrics}><RefreshCw size={15}/> Refresh metrics</button>
-   </section>
-   {!metrics?<p className="muted">Loading live metrics…</p>:metrics.error?<div className="error"><AlertTriangle size={16}/>{metrics.error}</div>:<>
-    <section className="overview-grid metrics-cards">
-     <Metric label="Nodes reporting" value={metrics.nodes?.available?metrics.nodes.items.filter(x=>x.usage).length:"—"} detail={metrics.nodes?.available?"Live node samples":"Metrics unavailable"}/>
-     <Metric label="Pods reporting" value={metrics.pods?.available?metrics.pods.items.length:"—"} detail={metrics.pods?.available?ns:"Metrics unavailable"}/>
-     <Metric label="Namespaces reporting" value={metrics.namespaces?.available?metrics.namespaces.items.length:"—"} detail="RBAC-approved namespaces"/>
-     <Metric label="Refresh interval" value="30s" detail={metricsLoading?"Refreshing now":"Automatic refresh"}/>
-    </section>
-    <section className="metrics-grid">
-     <div className="panel">
-      <div className="panel-head"><div><Server size={17}/><b>Node CPU & memory</b></div><span className="panel-caption">Usage / allocatable</span></div>
-      {!metrics.nodes?.available?<p className="muted">{metrics.nodes?.message||"Node metrics are unavailable."}</p>:
-       <div className="table-wrap"><table className="metrics-table"><thead><tr><th>Node</th><th>CPU</th><th>Memory</th></tr></thead><tbody>
-        {metrics.nodes.items.map(n=><tr key={n.name}><td><b>{n.name}</b><small>{n.ready?"Ready":"NotReady"}</small></td><td>{n.usage?`${n.usage.cpuMillicores}m / ${n.allocatable.cpuMillicores}m`:"—"}<small>{n.cpuPercent==null?"No sample":`${n.cpuPercent}%`}</small></td><td>{n.usage?`${n.usage.memoryMiB} / ${n.allocatable.memoryMiB} MiB`:"—"}<small>{n.memoryPercent==null?"No sample":`${n.memoryPercent}%`}</small></td></tr>)}
-       </tbody></table></div>}
-     </div>
-     <div className="panel">
-      <div className="panel-head"><div><Activity size={17}/><b>Pod CPU & memory</b></div><span className="panel-caption">{ns||"Selected namespace"}</span></div>
-      {!metrics.pods?.available?<p className="muted">{metrics.pods?.message||"Pod metrics are unavailable."}</p>:
-       metrics.pods.items.length?<div className="table-wrap"><table className="metrics-table"><thead><tr><th>Pod</th><th>CPU</th><th>Memory</th></tr></thead><tbody>
-        {metrics.pods.items.slice(0,15).map(p=><tr key={p.name}><td><b>{p.name}</b><small>{p.containers.length} container(s)</small></td><td>{p.cpuMillicores}m</td><td>{p.memoryMiB} MiB</td></tr>)}
-       </tbody></table></div>:<p className="muted">No pod metrics have been reported for this namespace yet.</p>}
-     </div>
-     <div className="panel namespace-metrics">
-      <div className="panel-head"><div><Layers size={17}/><b>Namespace usage</b></div><span className="panel-caption">Current pod totals</span></div>
-      {metrics.namespaces?.items?.length?<div className="table-wrap"><table className="metrics-table"><thead><tr><th>Namespace</th><th>Pods</th><th>CPU</th><th>Memory</th></tr></thead><tbody>
-       {metrics.namespaces.items.map(n=><tr key={n.namespace}><td><b>{n.namespace}</b></td><td>{n.pods}</td><td>{n.cpuMillicores}m</td><td>{n.memoryMiB} MiB</td></tr>)}
-      </tbody></table></div>:<p className="muted">{metrics.namespaces?.message||"No namespace metrics available. Check namespace-scoped metrics permissions."}</p>}
-     </div>
-    </section>
-    <p className="updated">Latest dashboard fetch: {new Date(metrics.updatedAt).toLocaleTimeString()} · Metrics Server timestamps are provided by Kubernetes.</p>
-   </>}
    <section className="stats">
     <div><b>{pods.length}</b><small>Pods in selected namespace</small></div>
     <div><b>{pods.filter(p=>p.phase==="Running"&&!p.reason).length}</b><small>Running</small></div>
@@ -195,10 +153,25 @@ function App(){
    <section className="listhead"><h2>Pods <small>{ns||"No accessible namespace"}</small></h2><div className="search"><Search size={16}/><input placeholder="Search pods" value={search} onChange={e=>setSearch(e.target.value)}/></div></section>
    {error&&<div className="error"><AlertTriangle size={17}/>{error}</div>}
    {!namespaces.length&&!error&&<p className="muted">No namespaces are currently accessible to this dashboard service account.</p>}
-   <div className="pods">{filtered.map(p=><article className="pod" key={p.name}>
+   <div className="pods">{filtered.map(p=>{
+    const metric=metrics?.available?(metrics.items||[]).find(item=>item.name===p.name):null;
+    const limits=Object.values(p.resourceLimits||{});
+    const cpuLimit=limits.reduce((sum,item)=>sum+(item.cpuMillicores||0),0);
+    const memoryLimit=limits.reduce((sum,item)=>sum+(item.memoryMiB||0),0);
+    const cpuPercent=metric&&cpuLimit>0?Math.min(100,metric.cpuMillicores/cpuLimit*100):null;
+    const memoryPercent=metric&&memoryLimit>0?Math.min(100,metric.memoryMiB/memoryLimit*100):null;
+    return <article className="pod" key={p.name}>
     <div className="podtop" onClick={()=>open(p,"Overview")}><div><b>{p.name}</b><small>Restarts: {p.restarts} · {p.containers.length} container(s)</small></div><span className={`status ${status(p).toLowerCase().replaceAll("_","-")}`}>{status(p)}</span></div>
+    <div className="pod-metrics">
+     <div className="pod-metric"><div className="pod-metric-label"><small>CPU</small><b>{metric?metric.cpuMillicores+"m":"—"}</b></div>
+      {cpuPercent!==null?<><div className="usage-track"><span className="usage-fill cpu-fill" style={{width:cpuPercent+"%"}}/></div><small className="usage-caption">{cpuPercent.toFixed(1)}% of configured limit</small></>:<small className="usage-caption">{metric?"No CPU limit configured":metrics?.available===false?"Metrics unavailable":"Waiting for metrics"}</small>}
+     </div>
+     <div className="pod-metric"><div className="pod-metric-label"><small>Memory</small><b>{metric?metric.memoryMiB+" MiB":"—"}</b></div>
+      {memoryPercent!==null?<><div className="usage-track"><span className="usage-fill memory-fill" style={{width:memoryPercent+"%"}}/></div><small className="usage-caption">{memoryPercent.toFixed(1)}% of configured limit</small></>:<small className="usage-caption">{metric?"No memory limit configured":metrics?.available===false?"Metrics unavailable":"Waiting for metrics"}</small>}
+     </div>
+    </div>
     <div className="actions"><button onClick={()=>open(p,"Logs")}><FileText/>Logs</button><button onClick={()=>open(p,"Events")}><Clock3/>Events</button><button onClick={()=>open(p,"Troubleshoot")}><Stethoscope/>Diagnose</button><button onClick={()=>open(p,"ConfigMaps")}><Settings/>ConfigMaps</button><button onClick={()=>open(p,"Secrets")}><Shield/>Secrets</button><button className="details" onClick={()=>open(p,"Overview")}>Details <ChevronRight/></button></div>
-   </article>)}</div>
+   </article>})}</div>
    {busy&&<p className="muted">Refreshing pod inventory…</p>}
   </main>
   {selected&&<div className="overlay" onClick={closeDrawer}><aside className="drawer" onClick={e=>e.stopPropagation()}>
