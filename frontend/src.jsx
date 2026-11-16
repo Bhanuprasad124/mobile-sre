@@ -19,7 +19,8 @@ function App(){
  [overview,setOverview]=useState(null),[selected,setSelected]=useState(null),
  [action,setAction]=useState("Overview"),[payload,setPayload]=useState(null),
  [search,setSearch]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState(""),
- [logsText,setLogsText]=useState(""),[streaming,setStreaming]=useState(false),[selectedContainer,setSelectedContainer]=useState("");
+ [logsText,setLogsText]=useState(""),[streaming,setStreaming]=useState(false),[selectedContainer,setSelectedContainer]=useState(""),
+ [metrics,setMetrics]=useState(null),[metricsLoading,setMetricsLoading]=useState(false);
  const streamAbort=useRef(null);
  async function api(path){
   const r=await fetch(path);
@@ -44,8 +45,23 @@ function App(){
   catch(e){setError(e.message)}
   finally{setBusy(false)}
  }
+ async function loadMetrics(){
+  setMetricsLoading(true);
+  try{
+   const requests=[
+    api("/api/metrics/nodes"),
+    ns?api(`/api/metrics/pods?namespace=${encodeURIComponent(ns)}`):Promise.resolve({available:false,message:"Select an accessible namespace to view pod metrics.",items:[]}),
+    api("/api/metrics/namespaces")
+   ];
+   const [nodes,podData,namespacesData]=await Promise.all(requests);
+   setMetrics({nodes,pods:podData,namespaces:namespacesData,updatedAt:new Date().toISOString()});
+  }catch(e){
+   setMetrics({error:e.message,updatedAt:new Date().toISOString()});
+  }finally{setMetricsLoading(false)}
+ }
  useEffect(()=>{loadNamespaces();loadOverview()},[]);
  useEffect(()=>{loadPods();const t=setInterval(loadPods,30000);return()=>clearInterval(t)},[ns]);
+ useEffect(()=>{loadMetrics();const t=setInterval(loadMetrics,30000);return()=>clearInterval(t)},[ns]);
  useEffect(()=>{const t=setInterval(loadOverview,30000);return()=>clearInterval(t)},[]);
  useEffect(()=>()=>{streamAbort.current?.abort()},[]);
  async function open(p,a){
@@ -135,6 +151,41 @@ function App(){
    </section>
    {overview&&<p className="updated">Updated {new Date(overview.generatedAt).toLocaleTimeString()} · Refreshes every 30 seconds · Node metadata is cluster-wide; pod and workload counts are RBAC-scoped.</p>}
 
+   <section className="section-title metrics-heading" id="metrics">
+    <div><h2>Live resource metrics</h2><p>Current CPU and memory usage from Kubernetes Metrics Server. Refreshes every 30 seconds; no historical data is stored.</p></div>
+    <button className="refresh" onClick={loadMetrics}><RefreshCw size={15}/> Refresh metrics</button>
+   </section>
+   {!metrics?<p className="muted">Loading live metrics…</p>:metrics.error?<div className="error"><AlertTriangle size={16}/>{metrics.error}</div>:<>
+    <section className="overview-grid metrics-cards">
+     <Metric label="Nodes reporting" value={metrics.nodes?.available?metrics.nodes.items.filter(x=>x.usage).length:"—"} detail={metrics.nodes?.available?"Live node samples":"Metrics unavailable"}/>
+     <Metric label="Pods reporting" value={metrics.pods?.available?metrics.pods.items.length:"—"} detail={metrics.pods?.available?ns:"Metrics unavailable"}/>
+     <Metric label="Namespaces reporting" value={metrics.namespaces?.available?metrics.namespaces.items.length:"—"} detail="RBAC-approved namespaces"/>
+     <Metric label="Refresh interval" value="30s" detail={metricsLoading?"Refreshing now":"Automatic refresh"}/>
+    </section>
+    <section className="metrics-grid">
+     <div className="panel">
+      <div className="panel-head"><div><Server size={17}/><b>Node CPU & memory</b></div><span className="panel-caption">Usage / allocatable</span></div>
+      {!metrics.nodes?.available?<p className="muted">{metrics.nodes?.message||"Node metrics are unavailable."}</p>:
+       <div className="table-wrap"><table className="metrics-table"><thead><tr><th>Node</th><th>CPU</th><th>Memory</th></tr></thead><tbody>
+        {metrics.nodes.items.map(n=><tr key={n.name}><td><b>{n.name}</b><small>{n.ready?"Ready":"NotReady"}</small></td><td>{n.usage?`${n.usage.cpuMillicores}m / ${n.allocatable.cpuMillicores}m`:"—"}<small>{n.cpuPercent==null?"No sample":`${n.cpuPercent}%`}</small></td><td>{n.usage?`${n.usage.memoryMiB} / ${n.allocatable.memoryMiB} MiB`:"—"}<small>{n.memoryPercent==null?"No sample":`${n.memoryPercent}%`}</small></td></tr>)}
+       </tbody></table></div>}
+     </div>
+     <div className="panel">
+      <div className="panel-head"><div><Activity size={17}/><b>Pod CPU & memory</b></div><span className="panel-caption">{ns||"Selected namespace"}</span></div>
+      {!metrics.pods?.available?<p className="muted">{metrics.pods?.message||"Pod metrics are unavailable."}</p>:
+       metrics.pods.items.length?<div className="table-wrap"><table className="metrics-table"><thead><tr><th>Pod</th><th>CPU</th><th>Memory</th></tr></thead><tbody>
+        {metrics.pods.items.slice(0,15).map(p=><tr key={p.name}><td><b>{p.name}</b><small>{p.containers.length} container(s)</small></td><td>{p.cpuMillicores}m</td><td>{p.memoryMiB} MiB</td></tr>)}
+       </tbody></table></div>:<p className="muted">No pod metrics have been reported for this namespace yet.</p>}
+     </div>
+     <div className="panel namespace-metrics">
+      <div className="panel-head"><div><Layers size={17}/><b>Namespace usage</b></div><span className="panel-caption">Current pod totals</span></div>
+      {metrics.namespaces?.items?.length?<div className="table-wrap"><table className="metrics-table"><thead><tr><th>Namespace</th><th>Pods</th><th>CPU</th><th>Memory</th></tr></thead><tbody>
+       {metrics.namespaces.items.map(n=><tr key={n.namespace}><td><b>{n.namespace}</b></td><td>{n.pods}</td><td>{n.cpuMillicores}m</td><td>{n.memoryMiB} MiB</td></tr>)}
+      </tbody></table></div>:<p className="muted">{metrics.namespaces?.message||"No namespace metrics available. Check namespace-scoped metrics permissions."}</p>}
+     </div>
+    </section>
+    <p className="updated">Latest dashboard fetch: {new Date(metrics.updatedAt).toLocaleTimeString()} · Metrics Server timestamps are provided by Kubernetes.</p>
+   </>}
    <section className="stats">
     <div><b>{pods.length}</b><small>Pods in selected namespace</small></div>
     <div><b>{pods.filter(p=>p.phase==="Running"&&!p.reason).length}</b><small>Running</small></div>
