@@ -3,11 +3,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 
-app = FastAPI(title="OpsHealth Mobile SRE", version="0.3.0")
+app = FastAPI(title="Mobile SRE", version="0.4.0")
 
 try:
     config.load_incluster_config()
@@ -247,6 +248,48 @@ def pods(namespace: str = Query(..., min_length=1, max_length=63)):
     return output
 
 
+@app.get("/api/pods/{pod_name}/logs/stream")
+def stream_logs(
+    pod_name: str,
+    namespace: str = Query(..., min_length=1, max_length=63),
+    container: str | None = None,
+    tail_lines: int = Query(100, ge=1, le=1000),
+):
+    """Stream timestamped container logs using existing namespace-scoped RBAC."""
+    pod = pod_or_404(namespace, pod_name)
+    valid = [item.name for item in (pod.spec.containers or [])]
+    if not valid:
+        raise HTTPException(409, "Pod has no containers")
+    if container is None:
+        container = valid[0]
+    if container not in valid:
+        raise HTTPException(400, "Container does not belong to this pod")
+    try:
+        response = core.read_namespaced_pod_log(
+            pod_name, namespace, container=container, follow=True,
+            tail_lines=tail_lines, timestamps=True,
+            _preload_content=False, _request_timeout=3600,
+        )
+    except ApiException as exc:
+        if exc.status in (400, 404):
+            raise HTTPException(409, "Container logs are not available yet. Check pod Events and scheduling diagnostics.")
+        raise HTTPException(500, "Unable to start the log stream")
+
+    def chunks():
+        try:
+            for chunk in response.stream(amt=1024, decode_content=False):
+                if chunk:
+                    yield chunk
+        finally:
+            response.close()
+
+    return StreamingResponse(
+        chunks(),
+        media_type="text/plain; charset=utf-8",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/api/pods/{pod_name}/logs")
 def logs(
     pod_name: str, namespace: str = Query(...),
@@ -343,6 +386,100 @@ def events(pod_name: str, namespace: str = Query(...)):
         )]
     except ApiException:
         raise HTTPException(500, "Unable to retrieve events")
+
+
+@app.get("/api/pods/{pod_name}/diagnostics")
+def diagnostics(pod_name: str, namespace: str = Query(...)):
+    """Read-only diagnostic signals and guidance; never mutates cluster resources."""
+    pod = pod_or_404(namespace, pod_name)
+    findings = []
+
+    def finding(severity, code, title, message, recommendation):
+        findings.append({
+            "severity": severity, "code": code, "title": title,
+            "message": message, "recommendation": recommendation,
+        })
+
+    phase = pod.status.phase or "Unknown"
+    if phase == "Pending":
+        finding("warning", "POD_PENDING", "Pod is Pending",
+                "The scheduler or kubelet has not completed pod startup.",
+                "Review Warning Events for FailedScheduling, volume attachment, image pull, or node capacity messages.")
+    elif phase == "Failed":
+        finding("critical", "POD_FAILED", "Pod has Failed",
+                "Kubernetes reports this pod in Failed phase.",
+                "Inspect container termination details and recent Warning Events.")
+
+    container_details = []
+    for status in (pod.status.container_statuses or []):
+        state = status.state
+        waiting = state.waiting if state else None
+        terminated = state.terminated if state else None
+        last_terminated = status.last_state.terminated if status.last_state and status.last_state.terminated else None
+        restarts = status.restart_count or 0
+
+        if waiting and waiting.reason:
+            reason = waiting.reason
+            guidance = {
+                "CrashLoopBackOff": ("The container repeatedly exits after starting.",
+                    "Inspect current and previous logs, exit code, startup probes, and recent configuration changes."),
+                "ImagePullBackOff": ("Kubernetes cannot pull the container image.",
+                    "Verify image name and tag, registry availability, imagePullSecrets, and node network access."),
+                "ErrImagePull": ("The image pull request failed.",
+                    "Read the related Warning Event and verify registry credentials, image path, and tag."),
+                "CreateContainerConfigError": ("Kubernetes could not construct the container configuration.",
+                    "Check referenced ConfigMaps, Secret references, environment variables, and pod Events. Secret values are never read."),
+                "ContainerCreating": ("The container is still being prepared.",
+                    "Check Events for volume mounts, image downloads, CNI setup, and sandbox creation."),
+            }
+            message, recommendation = guidance.get(
+                reason, (f"The container is waiting: {reason}.",
+                         "Inspect pod Events and the container specification for the underlying cause.")
+            )
+            severity = "critical" if reason in (
+                "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "CreateContainerConfigError"
+            ) else "warning"
+            finding(severity, reason.upper(), reason, message, recommendation)
+
+        if last_terminated and last_terminated.reason == "OOMKilled":
+            finding("critical", "OOMKILLED", f"{status.name} was OOMKilled",
+                    "The previous container instance exceeded its memory allowance.",
+                    "Compare memory usage with the container limit and inspect recent workload changes.")
+        elif terminated and terminated.exit_code not in (None, 0):
+            finding("warning", "CONTAINER_EXITED", f"{status.name} exited with code {terminated.exit_code}",
+                    f"Container termination reason: {terminated.reason or 'not reported'}.",
+                    "Inspect current or previous logs and application startup/shutdown behavior.")
+
+        if restarts:
+            finding("warning", "CONTAINER_RESTARTS", f"{status.name} has restarted {restarts} time(s)",
+                    "The container has restarted during this pod's lifetime.",
+                    "Review previous logs and Events to distinguish application exits, probe failures, and resource pressure.")
+
+        container_details.append({
+            "name": status.name, "ready": bool(status.ready),
+            "restartCount": restarts,
+            "waitingReason": waiting.reason if waiting else None,
+            "lastTerminatedReason": last_terminated.reason if last_terminated else None,
+            "lastExitCode": last_terminated.exit_code if last_terminated else None,
+        })
+
+    for condition in (pod.status.conditions or []):
+        if condition.status == "False":
+            finding("warning", (condition.reason or condition.type or "POD_CONDITION").upper(),
+                    f"{condition.type} condition is False",
+                    condition.message or condition.reason or "Kubernetes reports an unhealthy pod condition.",
+                    "Review pod Events and condition details to identify the failing scheduling, initialization, or readiness step.")
+
+    if not findings:
+        finding("info", "NO_FAILURE_SIGNAL", "No obvious failure signal detected",
+                "The pod status and container states do not currently expose a common failure condition.",
+                "If the application is still unhealthy, inspect logs, readiness behavior, dependencies, and recent Events.")
+
+    return {
+        "name": pod.metadata.name, "namespace": namespace, "phase": phase,
+        "node": pod.spec.node_name, "containers": container_details,
+        "findings": findings,
+    }
 
 
 @app.get("/api/pods/{pod_name}/details")

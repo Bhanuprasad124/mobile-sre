@@ -44,17 +44,17 @@ roleRef:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: opshealth-mobile-sre
+  name: mobile-sre-platform
   namespace: mobile-sre
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: opshealth-mobile-sre
+      app: mobile-sre-platform
   template:
     metadata:
       labels:
-        app: opshealth-mobile-sre
+        app: mobile-sre-platform
     spec:
       serviceAccountName: sre-dashboard
       containers:
@@ -87,11 +87,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: opshealth-mobile-sre
+  name: mobile-sre-platform
   namespace: mobile-sre
 spec:
   selector:
-    app: opshealth-mobile-sre
+    app: mobile-sre-platform
   ports:
   - name: http
     port: 80
