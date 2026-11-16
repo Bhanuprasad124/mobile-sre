@@ -99,3 +99,17 @@
 .metrics-table td b{font-size:11px}
 .metrics-table td small{font-size:9px;color:#8291a8}
 @media(max-width:700px){.metrics-grid{grid-template-columns:1fr}.namespace-metrics{grid-column:auto}.metrics-heading{align-items:flex-start}.metrics-heading .refresh{width:auto}}
+
+
+/* Inline pod resource metrics */
+.pod-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:13px;padding:11px 0 2px;border-top:1px solid #edf0f5}
+.pod-metric{min-width:0}
+.pod-metric-label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}
+.pod-metric-label small{margin:0;color:#8291a8;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+.pod-metric-label b{font-size:13px;color:#263449;white-space:nowrap}
+.usage-track{height:6px;background:#edf1f6;border-radius:99px;overflow:hidden}
+.usage-fill{display:block;height:100%;border-radius:99px}
+.cpu-fill{background:#238b57}
+.memory-fill{background:#d18a22}
+.usage-caption{display:block;color:#8291a8;font-size:9px;margin-top:5px}
+@media(max-width:520px){.pod-metrics{gap:10px}.pod-metric-label b{font-size:12px}}
