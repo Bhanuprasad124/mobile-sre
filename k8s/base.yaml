@@ -10,8 +10,8 @@ metadata:
   namespace: mobile-sre
 automountServiceAccountToken: true
 ---
-# Cluster-wide permission is limited to discovering namespace names and
-# creating SelfSubjectAccessReviews. It does NOT grant pod/config access.
+# Cluster-wide permissions are limited to namespace discovery, SelfSubjectAccessReviews,
+# and read-only node metadata. Pod/workload access remains namespace-scoped.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -23,6 +23,10 @@ rules:
 - apiGroups: ["authorization.k8s.io"]
   resources: ["selfsubjectaccessreviews"]
   verbs: ["create"]
+# Read-only node metadata is needed for cluster node readiness.
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

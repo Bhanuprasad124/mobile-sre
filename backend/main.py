@@ -1,12 +1,13 @@
 import os
+from datetime import datetime, timezone
 from pathlib import Path
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 
-app = FastAPI(title="OpsHealth Mobile SRE", version="0.2.0")
+app = FastAPI(title="OpsHealth Mobile SRE", version="0.3.0")
 
 try:
     config.load_incluster_config()
@@ -16,23 +17,33 @@ except config.ConfigException:
 
 core = client.CoreV1Api()
 authz = client.AuthorizationV1Api()
+apps = client.AppsV1Api()
 
-def require_namespace_access(namespace: str, verb: str = "list", resource: str = "pods"):
-    if not namespace or len(namespace) > 63:
-        raise HTTPException(400, "Invalid namespace")
+
+def has_namespace_access(namespace: str, verb: str, resource: str, group: str = "") -> bool:
+    """Check the dashboard service account's effective permission without broadening RBAC."""
     review = client.V1SelfSubjectAccessReview(
         spec=client.V1SelfSubjectAccessReviewSpec(
             resource_attributes=client.V1ResourceAttributes(
-                namespace=namespace, verb=verb, resource=resource, group=""
+                namespace=namespace, verb=verb, resource=resource, group=group
             )
         )
     )
     try:
         result = authz.create_self_subject_access_review(review)
+        return bool(result.status and result.status.allowed)
     except ApiException:
-        raise HTTPException(403, "Unable to verify namespace permissions")
-    if not result.status or not result.status.allowed:
+        return False
+
+
+def require_namespace_access(
+    namespace: str, verb: str = "list", resource: str = "pods", group: str = ""
+):
+    if not namespace or len(namespace) > 63:
+        raise HTTPException(400, "Invalid namespace")
+    if not has_namespace_access(namespace, verb, resource, group):
         raise HTTPException(403, "Namespace access denied")
+
 
 def pod_or_404(namespace: str, pod_name: str):
     require_namespace_access(namespace, "get", "pods")
@@ -43,9 +54,28 @@ def pod_or_404(namespace: str, pod_name: str):
             raise HTTPException(404, "Pod not found")
         raise HTTPException(exc.status or 500, "Unable to retrieve pod")
 
+
+def pod_waiting_reason(pod):
+    for container_status in (pod.status.container_statuses or []):
+        state = container_status.state
+        if state and state.waiting and state.waiting.reason:
+            return state.waiting.reason
+        if state and state.terminated and state.terminated.exit_code not in (None, 0):
+            return state.terminated.reason or "ContainerExited"
+    return None
+
+
+def ready_condition(node):
+    for condition in (node.status.conditions or []):
+        if condition.type == "Ready":
+            return condition.status == "True"
+    return False
+
+
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "version": app.version}
+
 
 @app.get("/api/namespaces")
 def namespaces():
@@ -56,12 +86,144 @@ def namespaces():
     visible = []
     for item in all_ns:
         name = item.metadata.name
-        try:
-            require_namespace_access(name, "list", "pods")
+        if has_namespace_access(name, "list", "pods"):
             visible.append({"name": name, "status": item.status.phase})
-        except HTTPException:
+    return sorted(visible, key=lambda item: item["name"])
+
+
+@app.get("/api/overview")
+def cluster_overview():
+    """
+    Cluster summary with a deliberately limited data scope:
+    - Pod/workload totals only include namespaces where this service account
+      can list pods.
+    - Node summary is cluster-wide and requires the explicit read-only
+      get/list nodes permission in the namespace-discovery ClusterRole.
+    - No Secret resources or values are queried.
+    """
+    try:
+        all_namespaces = core.list_namespace().items
+    except ApiException:
+        raise HTTPException(500, "Unable to discover namespaces")
+
+    accessible_namespaces = [
+        item.metadata.name for item in all_namespaces
+        if has_namespace_access(item.metadata.name, "list", "pods")
+    ]
+
+    pod_counts = {
+        "total": 0, "running": 0, "pending": 0, "failed": 0,
+        "succeeded": 0, "needsAttention": 0
+    }
+    workload_counts = {
+        "deployments": {"total": 0, "healthy": 0, "unhealthy": 0},
+        "statefulSets": {"total": 0, "healthy": 0, "unhealthy": 0},
+        "daemonSets": {"total": 0, "healthy": 0, "unhealthy": 0},
+    }
+
+    for namespace in accessible_namespaces:
+        try:
+            pod_list = core.list_namespaced_pod(namespace)
+            for pod in pod_list.items:
+                phase = pod.status.phase or "Unknown"
+                reason = pod_waiting_reason(pod)
+                pod_counts["total"] += 1
+                if phase == "Running":
+                    pod_counts["running"] += 1
+                elif phase == "Pending":
+                    pod_counts["pending"] += 1
+                elif phase == "Failed":
+                    pod_counts["failed"] += 1
+                elif phase == "Succeeded":
+                    pod_counts["succeeded"] += 1
+                if phase in ("Pending", "Failed") or reason:
+                    pod_counts["needsAttention"] += 1
+        except ApiException:
+            # A namespace that becomes inaccessible during the request is skipped.
             continue
-    return sorted(visible, key=lambda x: x["name"])
+
+        if has_namespace_access(namespace, "list", "deployments", "apps"):
+            try:
+                for deployment in apps.list_namespaced_deployment(namespace).items:
+                    desired = deployment.spec.replicas or 0
+                    ready = deployment.status.available_replicas or 0
+                    updated = deployment.status.updated_replicas or 0
+                    healthy = ready >= desired and updated >= desired
+                    key = workload_counts["deployments"]
+                    key["total"] += 1
+                    key["healthy" if healthy else "unhealthy"] += 1
+            except ApiException:
+                pass
+
+        if has_namespace_access(namespace, "list", "statefulsets", "apps"):
+            try:
+                for stateful_set in apps.list_namespaced_stateful_set(namespace).items:
+                    desired = stateful_set.spec.replicas or 0
+                    ready = stateful_set.status.ready_replicas or 0
+                    key = workload_counts["statefulSets"]
+                    key["total"] += 1
+                    key["healthy" if ready >= desired else "unhealthy"] += 1
+            except ApiException:
+                pass
+
+        if has_namespace_access(namespace, "list", "daemonsets", "apps"):
+            try:
+                for daemon_set in apps.list_namespaced_daemon_set(namespace).items:
+                    desired = daemon_set.status.desired_number_scheduled or 0
+                    ready = daemon_set.status.number_ready or 0
+                    key = workload_counts["daemonSets"]
+                    key["total"] += 1
+                    key["healthy" if ready >= desired else "unhealthy"] += 1
+            except ApiException:
+                pass
+
+    nodes_payload = {
+        "available": False, "total": 0, "ready": 0, "notReady": 0,
+        "items": [], "message": None
+    }
+    try:
+        node_list = core.list_node()
+        node_items = []
+        for node in node_list.items:
+            is_ready = ready_condition(node)
+            labels = node.metadata.labels or {}
+            roles = sorted(
+                label.split("/", 1)[1]
+                for label in labels
+                if label.startswith("node-role.kubernetes.io/")
+            )
+            node_items.append({
+                "name": node.metadata.name,
+                "ready": is_ready,
+                "roles": roles,
+                "kubeletVersion": (
+                    node.status.node_info.kubelet_version
+                    if node.status and node.status.node_info else None
+                ),
+            })
+        nodes_payload.update({
+            "available": True,
+            "total": len(node_items),
+            "ready": sum(1 for item in node_items if item["ready"]),
+            "notReady": sum(1 for item in node_items if not item["ready"]),
+            "items": sorted(node_items, key=lambda item: item["name"]),
+        })
+    except ApiException as exc:
+        nodes_payload["message"] = (
+            "Node health is unavailable. Apply the updated dashboard RBAC "
+            "to grant read-only node get/list access."
+            if exc.status == 403 else "Unable to retrieve node health."
+        )
+
+    return {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "scope": "authorized-namespaces",
+        "namespaces": {"accessible": len(accessible_namespaces)},
+        "pods": pod_counts,
+        "workloads": workload_counts,
+        "nodes": nodes_payload,
+    }
+
 
 @app.get("/api/pods")
 def pods(namespace: str = Query(..., min_length=1, max_length=63)):
@@ -73,21 +235,17 @@ def pods(namespace: str = Query(..., min_length=1, max_length=63)):
     output = []
     for pod in result.items:
         statuses = pod.status.container_statuses or []
-        waiting = []
-        for cs in statuses:
-            state = cs.state
-            if state and state.waiting and state.waiting.reason:
-                waiting.append(state.waiting.reason)
         output.append({
             "name": pod.metadata.name,
             "phase": pod.status.phase or "Unknown",
-            "reason": (waiting[0] if waiting else None),
+            "reason": pod_waiting_reason(pod),
             "restarts": sum(cs.restart_count or 0 for cs in statuses),
             "node": pod.spec.node_name,
             "containers": [c.name for c in (pod.spec.containers or [])],
             "created": pod.metadata.creation_timestamp.isoformat() if pod.metadata.creation_timestamp else None
         })
     return output
+
 
 @app.get("/api/pods/{pod_name}/logs")
 def logs(
@@ -110,25 +268,29 @@ def logs(
         )
         return {"container": container, "previous": previous, "logs": content}
     except ApiException as exc:
-        if exc.status == 400 or exc.status == 404:
+        if exc.status in (400, 404):
             raise HTTPException(409, "Container logs are not available yet. Check pod events and scheduling diagnostics.")
         raise HTTPException(500, "Unable to retrieve logs")
+
 
 @app.get("/api/pods/{pod_name}/configmaps")
 def configmaps(pod_name: str, namespace: str = Query(...)):
     pod = pod_or_404(namespace, pod_name)
     require_namespace_access(namespace, "list", "configmaps")
     names = set()
-    for c in pod.spec.containers or []:
-        for env in c.env or []:
+    for container in pod.spec.containers or []:
+        for env in container.env or []:
             ref = getattr(getattr(env, "value_from", None), "config_map_key_ref", None)
-            if ref: names.add(ref.name)
-        for env_from in c.env_from or []:
+            if ref:
+                names.add(ref.name)
+        for env_from in container.env_from or []:
             ref = getattr(env_from, "config_map_ref", None)
-            if ref: names.add(ref.name)
-    for vol in pod.spec.volumes or []:
-        ref = getattr(vol, "config_map", None)
-        if ref: names.add(ref.name)
+            if ref:
+                names.add(ref.name)
+    for volume in pod.spec.volumes or []:
+        ref = getattr(volume, "config_map", None)
+        if ref:
+            names.add(ref.name)
     result = []
     for name in sorted(names):
         try:
@@ -138,23 +300,28 @@ def configmaps(pod_name: str, namespace: str = Query(...)):
             result.append({"name": name, "data": None, "unavailable": True})
     return result
 
+
 @app.get("/api/pods/{pod_name}/secrets")
 def secret_references(pod_name: str, namespace: str = Query(...)):
     pod = pod_or_404(namespace, pod_name)
     # Intentionally do not GET or LIST Secret objects. Only report references
     # embedded in the pod specification; secret values are never retrieved.
     refs = set()
-    for c in pod.spec.containers or []:
-        for env in c.env or []:
+    for container in pod.spec.containers or []:
+        for env in container.env or []:
             ref = getattr(getattr(env, "value_from", None), "secret_key_ref", None)
-            if ref: refs.add((ref.name, ref.key or ""))
-        for env_from in c.env_from or []:
+            if ref:
+                refs.add((ref.name, ref.key or ""))
+        for env_from in container.env_from or []:
             ref = getattr(env_from, "secret_ref", None)
-            if ref: refs.add((ref.name, "*"))
-    for vol in pod.spec.volumes or []:
-        ref = getattr(vol, "secret", None)
-        if ref: refs.add((ref.secret_name, "volume"))
-    return [{"name": n, "reference": k, "valuesExposed": False} for n, k in sorted(refs)]
+            if ref:
+                refs.add((ref.name, "*"))
+    for volume in pod.spec.volumes or []:
+        ref = getattr(volume, "secret", None)
+        if ref:
+            refs.add((ref.secret_name, "volume"))
+    return [{"name": name, "reference": key, "valuesExposed": False} for name, key in sorted(refs)]
+
 
 @app.get("/api/pods/{pod_name}/events")
 def events(pod_name: str, namespace: str = Query(...)):
@@ -164,11 +331,19 @@ def events(pod_name: str, namespace: str = Query(...)):
         result = core.list_namespaced_event(
             namespace, field_selector=f"involvedObject.name={pod_name}"
         )
-        return [{"type": e.type, "reason": e.reason, "message": e.message,
-                 "count": e.count, "lastTimestamp": (e.last_timestamp or e.event_time).isoformat() if (e.last_timestamp or e.event_time) else None}
-                for e in sorted(result.items, key=lambda x: x.metadata.creation_timestamp or 0, reverse=True)]
+        return [{
+            "type": event.type, "reason": event.reason, "message": event.message,
+            "count": event.count,
+            "lastTimestamp": (event.last_timestamp or event.event_time).isoformat()
+            if (event.last_timestamp or event.event_time) else None
+        } for event in sorted(
+            result.items,
+            key=lambda item: item.metadata.creation_timestamp or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True
+        )]
     except ApiException:
         raise HTTPException(500, "Unable to retrieve events")
+
 
 @app.get("/api/pods/{pod_name}/details")
 def details(pod_name: str, namespace: str = Query(...)):
@@ -177,12 +352,17 @@ def details(pod_name: str, namespace: str = Query(...)):
         "name": pod.metadata.name, "namespace": namespace,
         "phase": pod.status.phase, "node": pod.spec.node_name,
         "podIP": pod.status.pod_ip,
-        "conditions": [{"type": c.type, "status": c.status, "reason": c.reason, "message": c.message} for c in (pod.status.conditions or [])],
-        "containers": [{"name": c.name, "image": c.image,
-                        "requests": c.resources.requests if c.resources else None,
-                        "limits": c.resources.limits if c.resources else None}
-                       for c in (pod.spec.containers or [])]
+        "conditions": [{
+            "type": condition.type, "status": condition.status,
+            "reason": condition.reason, "message": condition.message
+        } for condition in (pod.status.conditions or [])],
+        "containers": [{
+            "name": container.name, "image": container.image,
+            "requests": container.resources.requests if container.resources else None,
+            "limits": container.resources.limits if container.resources else None
+        } for container in (pod.spec.containers or [])]
     }
+
 
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
